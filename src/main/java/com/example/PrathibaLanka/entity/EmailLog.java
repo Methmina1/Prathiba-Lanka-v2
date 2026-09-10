@@ -33,4 +33,7 @@ public class EmailLog {
 
     @CreationTimestamp
     private LocalDateTime sentAt;
+
+    @Column(columnDefinition = "BOOLEAN", nullable = false)
+    private Boolean sent;
 }
