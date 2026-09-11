@@ -16,7 +16,7 @@ public class EmailLog {
 
     @ManyToOne
     @JoinColumn(name = "booking_id")
-    private BookingRequest bookingRequest;
+    private BookingRequest bookingRequest;    // nullable
 
     @Enumerated(EnumType.STRING)
     @Column(length = 30)
@@ -31,9 +31,12 @@ public class EmailLog {
     @Column(columnDefinition = "TEXT", nullable = false)
     private String body;
 
+    @Column(nullable = false)
+    private Boolean sent = false;
+
+    @Column(length = 255)
+    private String failureReason;
+
     @CreationTimestamp
     private LocalDateTime sentAt;
-
-    @Column(columnDefinition = "BOOLEAN", nullable = false)
-    private Boolean sent;
 }

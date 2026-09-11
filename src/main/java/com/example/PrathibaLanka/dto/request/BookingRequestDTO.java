@@ -6,7 +6,7 @@ import lombok.Data;
 import java.time.LocalDate;
 
 @Data
-public class BookingRequestDto {
+public class BookingRequestDTO {
 
     @NotNull(message = "Customer ID is required")
     private Long customerId;
@@ -14,8 +14,9 @@ public class BookingRequestDto {
     @NotNull(message = "Package ID is required")
     private Long packageId;
 
+    @NotNull(message = "Number of travelers is required")
     @Min(value = 1, message = "Number of travelers must be at least 1")
-    private int travelers;
+    private Integer numTravelers;
 
     @NotNull(message = "Preferred travel date is required")
     private LocalDate preferredTravelDate;
