@@ -7,7 +7,10 @@ import lombok.Data;
 
 @Data
 public class ReviewRequestDTO {
-    @NotNull(message = "Customer ID is required")
+    /**
+     * Optional: the reviewing customer is taken from the authenticated JWT. If this field is
+     * sent it must match the authenticated customer, otherwise the request is rejected with 403.
+     */
     private Long customerId;
 
     private Long packageId;

@@ -13,6 +13,7 @@ import com.example.PrathibaLanka.repository.AdminRepository;
 import com.example.PrathibaLanka.repository.BookingRequestRepository;
 import com.example.PrathibaLanka.repository.CustomerRepository;
 import com.example.PrathibaLanka.repository.TravelPackageRepository;
+import com.example.PrathibaLanka.security.OwnershipGuard;
 import com.example.PrathibaLanka.util.PinGenerator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -35,14 +36,17 @@ public class BookingService {
 
     /**
      * Step 1: Customer requests a booking.
+     * - The acting customer is taken from the authenticated principal (never trusted from the body).
      * - Validate package exists, is ACTIVE, and has capacity.
      * - Generate a unique PIN.
      * - Save booking with status PENDING.
      * - Send pending email with PIN.
      */
-    public BookingRequest requestBooking(BookingRequestDTO dto) {
-        Customer customer = customerRepo.findById(dto.getCustomerId())
-                .orElseThrow(() -> new ResourceNotFoundException("Customer not found with id: " + dto.getCustomerId()));
+    public BookingRequest requestBooking(BookingRequestDTO dto, Long authenticatedCustomerId) {
+        Long customerId = OwnershipGuard.requireOwnCustomerId(dto.getCustomerId(), authenticatedCustomerId);
+
+        Customer customer = customerRepo.findById(customerId)
+                .orElseThrow(() -> new ResourceNotFoundException("Customer not found with id: " + customerId));
 
         TravelPackage pkg = packageRepo.findById(dto.getPackageId())
                 .orElseThrow(() -> new ResourceNotFoundException("Package not found with id: " + dto.getPackageId()));
@@ -145,6 +149,15 @@ public class BookingService {
     @Transactional(readOnly = true)
     public List<BookingRequest> getAllBookings() {
         return bookingRepo.findAll();
+    }
+
+    /**
+     * Utility: list the bookings of one customer (own-bookings endpoint).
+     * Filtering happens in the database instead of loading the whole table into memory.
+     */
+    @Transactional(readOnly = true)
+    public List<BookingRequest> getBookingsForCustomer(Long customerId) {
+        return bookingRepo.findByCustomer_CustomerId(customerId);
     }
 
     /**

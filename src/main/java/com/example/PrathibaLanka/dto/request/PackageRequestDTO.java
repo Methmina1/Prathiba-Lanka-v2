@@ -17,11 +17,12 @@ public class PackageRequestDTO {
     @NotBlank(message = "Destination is required")
     private String destination;
 
+    @NotNull(message = "Duration is required")
     @Min(value = 1, message = "Duration must be at least 1 day")
-    private Integer duration;
+    private Integer durationDays;
 
     @NotNull(message = "Price is required")
-    @Min(value = 0, message = "Price must be possitive")
+    @Min(value = 0, message = "Price must be positive")
     private BigDecimal price;
 
     @Min(value = 1, message = "Max capacity must be at least 1")

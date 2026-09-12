@@ -7,4 +7,6 @@ import java.util.List;
 
 public interface TravelPackageRepository extends JpaRepository<TravelPackage, Long> {
     List<TravelPackage> findByStatus(PackageStatus status);
+    List<TravelPackage> findByDestinationContainingIgnoreCaseAndStatus(
+            String destination, PackageStatus status);
 }

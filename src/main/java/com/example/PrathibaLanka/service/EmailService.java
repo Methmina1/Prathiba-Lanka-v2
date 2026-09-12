@@ -26,7 +26,13 @@ public class EmailService {
     private final ObjectProvider<JavaMailSender> mailSenderProvider;
     private final EmailLogRepository emailLogRepository;
 
-    private void sendAndLog(String to, String subject, String body, EmailType type, BookingRequest booking) {
+    /**
+     * Sends the message and always writes an {@link EmailLog} row, so a failed delivery is
+     * recorded instead of silently disappearing.
+     *
+     * @return true only if the mail server accepted the message
+     */
+    private boolean sendAndLog(String to, String subject, String body, EmailType type, BookingRequest booking) {
         boolean sent = false;
         String failureReason = null;
 
@@ -60,9 +66,11 @@ public class EmailService {
         emailLog.setFailureReason(failureReason);
         emailLog.setSentAt(LocalDateTime.now());
         emailLogRepository.save(emailLog);
+
+        return sent;
     }
 
-    public void sendBookingPendingEmail(BookingRequest booking) {
+    public boolean sendBookingPendingEmail(BookingRequest booking) {
         String to = booking.getCustomer().getEmail();
         String subject = "Your Trip Booking is Pending – PIN: " + booking.getPinCode();
         String body = "Dear " + booking.getCustomer().getFullName() + ",\n\n"
@@ -71,10 +79,10 @@ public class EmailService {
                 + "Your PIN: " + booking.getPinCode() + "\n\n"
                 + "You can track your booking using this PIN on our website.\n\n"
                 + "Best regards,\nPrathibaLanka Team";
-        sendAndLog(to, subject, body, EmailType.PENDING_NOTIFICATION, booking);
+        return sendAndLog(to, subject, body, EmailType.PENDING_NOTIFICATION, booking);
     }
 
-    public void sendBookingConfirmedEmail(BookingRequest booking) {
+    public boolean sendBookingConfirmedEmail(BookingRequest booking) {
         String to = booking.getCustomer().getEmail();
         String subject = "Your Trip is Confirmed! – PIN: " + booking.getPinCode();
         String body = "Dear " + booking.getCustomer().getFullName() + ",\n\n"
@@ -84,10 +92,10 @@ public class EmailService {
                 + "Total Price: $" + booking.getConfirmedPrice() + "\n\n"
                 + "We look forward to serving you.\n\n"
                 + "Best regards,\nPrathibaLanka Team";
-        sendAndLog(to, subject, body, EmailType.CONFIRMATION, booking);
+        return sendAndLog(to, subject, body, EmailType.CONFIRMATION, booking);
     }
 
-    public void sendAutoResponse(ContactQuery query) {
+    public boolean sendAutoResponse(ContactQuery query) {
         String to = query.getEmail();
         String subject = "We received your message – PrathibaLanka";
         String body = "Dear " + query.getName() + ",\n\n"
@@ -95,6 +103,6 @@ public class EmailService {
                 + "We have received your message and will get back to you as soon as possible.\n\n"
                 + "Your query reference: " + query.getQueryId() + "\n\n"
                 + "Best regards,\nPrathibaLanka Team";
-        sendAndLog(to, subject, body, EmailType.AUTO_RESPONSE, null);
+        return sendAndLog(to, subject, body, EmailType.AUTO_RESPONSE, null);
     }
 }

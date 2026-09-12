@@ -2,7 +2,8 @@ package com.example.PrathibaLanka.repository;
 
 import com.example.PrathibaLanka.entity.JournalPost;
 import org.springframework.data.jpa.repository.JpaRepository;
+import java.util.List;
 
 public interface JournalPostRepository extends JpaRepository<JournalPost, Long> {
-    // TODO: Add custom queries if needed
+    List<JournalPost> findByStatus(String status);
 }

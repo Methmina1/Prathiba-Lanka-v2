@@ -3,12 +3,16 @@ package com.example.PrathibaLanka.dto.request;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
+
 import java.time.LocalDate;
 
 @Data
 public class BookingRequestDTO {
 
-    @NotNull(message = "Customer ID is required")
+    /**
+     * Optional: the acting customer is taken from the authenticated JWT. If this field is sent
+     * it must match the authenticated customer, otherwise the request is rejected with 403.
+     */
     private Long customerId;
 
     @NotNull(message = "Package ID is required")

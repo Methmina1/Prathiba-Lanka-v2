@@ -9,4 +9,5 @@ import java.util.Optional;
 public interface BookingRequestRepository extends JpaRepository<BookingRequest, Long> {
     Optional<BookingRequest> findByPinCode(String pinCode);
     List<BookingRequest> findByStatus(BookingStatus status);
+    List<BookingRequest> findByCustomer_CustomerId(Long customerId);
 }
