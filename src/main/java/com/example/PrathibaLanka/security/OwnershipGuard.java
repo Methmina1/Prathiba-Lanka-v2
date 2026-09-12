@@ -3,11 +3,8 @@ package com.example.PrathibaLanka.security;
 import com.example.PrathibaLanka.exception.ForbiddenException;
 
 /**
- * Guards object ownership for endpoints that act on a customer account.
- *
- * <p>Booking and review submission used to trust the {@code customerId} sent in the request
- * body, which let any anonymous caller create bookings or post reviews in another customer's
- * name. The acting customer is now always taken from the authenticated JWT.
+ * Booking and review submission used to trust the {@code customerId} in the request body, which
+ * allowed acting on another customer's account. The acting customer now always comes from the JWT.
  */
 public final class OwnershipGuard {
 
@@ -15,11 +12,10 @@ public final class OwnershipGuard {
     }
 
     /**
-     * @param requestedCustomerId     customerId from the request body (may be null)
-     * @param authenticatedCustomerId customerId from the authenticated principal
+     * @param requestedCustomerId     customerId from the request body, may be null
+     * @param authenticatedCustomerId customerId of the authenticated principal
      * @return the customerId to act on
-     * @throws ForbiddenException when there is no authenticated customer, or when the body
-     *                            tries to act on a different account
+     * @throws ForbiddenException if there is no authenticated customer, or the body targets another one
      */
     public static Long requireOwnCustomerId(Long requestedCustomerId, Long authenticatedCustomerId) {
         if (authenticatedCustomerId == null) {

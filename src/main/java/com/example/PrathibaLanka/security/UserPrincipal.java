@@ -20,7 +20,6 @@ public class UserPrincipal implements UserDetails {
     private final String password;
     private final Collection<? extends GrantedAuthority> authorities;
 
-    /** Build a principal from an Admin entity. */
     public static UserPrincipal fromAdmin(Admin admin) {
         return new UserPrincipal(
                 admin.getAdminId(),
@@ -30,7 +29,6 @@ public class UserPrincipal implements UserDetails {
         );
     }
 
-    /** Build a principal from a Customer entity. */
     public static UserPrincipal fromCustomer(Customer customer) {
         return new UserPrincipal(
                 customer.getCustomerId(),

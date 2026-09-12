@@ -32,7 +32,6 @@ public class AuthController {
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
 
-    /** Login for both admins and customers. */
     @PostMapping("/login")
     public ResponseEntity<AuthResponseDTO> login(@Valid @RequestBody LoginRequestDTO dto) {
         Authentication auth = authenticationManager.authenticate(
@@ -48,12 +47,11 @@ public class AuthController {
         ));
     }
 
-    /** Public customer registration. */
     @PostMapping("/register")
     public ResponseEntity<AuthResponseDTO> register(@Valid @RequestBody RegisterRequestDTO dto) {
         String email = normalizeEmail(dto.getEmail());
 
-        // Enforce globally unique email across Admin and Customer (case-insensitive)
+        // Email must be unique across admins and customers, not just within one table.
         if (adminRepository.findByEmailIgnoreCase(email).isPresent() ||
                 customerRepository.findByEmailIgnoreCase(email).isPresent()) {
             throw new BadRequestException("Email is already registered.");
@@ -75,10 +73,7 @@ public class AuthController {
         ));
     }
 
-    /**
-     * Emails are stored and compared in a single canonical form, otherwise "User@x.com" and
-     * "user@x.com" can both register (duplicate accounts) and only the exact casing can log in.
-     */
+    /** Single canonical form, otherwise "User@x.com" and "user@x.com" become two accounts. */
     private String normalizeEmail(String email) {
         return email == null ? null : email.trim().toLowerCase(Locale.ROOT);
     }

@@ -22,9 +22,6 @@ public class TravelPackageService {
     private final TravelPackageRepository packageRepo;
     private final AdminRepository adminRepo;
 
-    /**
-     * Create a new travel package (admin only).
-     */
     public TravelPackage createPackage(PackageRequestDTO dto, Long adminId) {
         Admin admin = adminRepo.findById(adminId)
                 .orElseThrow(() -> new ResourceNotFoundException(
@@ -44,9 +41,6 @@ public class TravelPackageService {
         return packageRepo.save(pkg);
     }
 
-    /**
-     * Update an existing package (admin only).
-     */
     public TravelPackage updatePackage(Long packageId, PackageRequestDTO dto) {
         TravelPackage pkg = packageRepo.findById(packageId)
                 .orElseThrow(() -> new ResourceNotFoundException(
@@ -66,10 +60,7 @@ public class TravelPackageService {
         return packageRepo.save(pkg);
     }
 
-    /**
-     * Delete a package (hard delete).
-     * NOTE: If bookings reference it, this will fail. Consider soft delete instead.
-     */
+    /** Hard delete: fails with 409 while bookings still reference the package. */
     public void deletePackage(Long packageId) {
         TravelPackage pkg = packageRepo.findById(packageId)
                 .orElseThrow(() -> new ResourceNotFoundException(
@@ -77,9 +68,7 @@ public class TravelPackageService {
         packageRepo.delete(pkg);
     }
 
-    /**
-     * Soft delete / deactivate – safer alternative to hard delete.
-     */
+    /** Soft delete, safe when the package already has bookings. */
     public TravelPackage deactivatePackage(Long packageId) {
         TravelPackage pkg = packageRepo.findById(packageId)
                 .orElseThrow(() -> new ResourceNotFoundException(
@@ -88,9 +77,6 @@ public class TravelPackageService {
         return packageRepo.save(pkg);
     }
 
-    /**
-     * Fetch a single package by ID.
-     */
     @Transactional(readOnly = true)
     public TravelPackage getPackageById(Long packageId) {
         return packageRepo.findById(packageId)
@@ -98,31 +84,21 @@ public class TravelPackageService {
                         "Package not found with id: " + packageId));
     }
 
-    /**
-     * Public: list all ACTIVE packages.
-     */
     @Transactional(readOnly = true)
     public List<TravelPackage> getActivePackages() {
         return packageRepo.findByStatus(PackageStatus.ACTIVE);
     }
 
-    /**
-     * Admin: list ALL packages (any status).
-     */
     @Transactional(readOnly = true)
     public List<TravelPackage> getAllPackages() {
         return packageRepo.findAll();
     }
 
-    /**
-     * Filter by destination (public, optional).
-     */
     @Transactional(readOnly = true)
     public List<TravelPackage> searchByDestination(String destination) {
         if (destination == null || destination.isBlank()) {
             throw new BadRequestException("Destination must not be empty.");
         }
-        // Assuming you add this method to the repository (see below)
         return packageRepo.findByDestinationContainingIgnoreCaseAndStatus(destination, PackageStatus.ACTIVE);
     }
 }

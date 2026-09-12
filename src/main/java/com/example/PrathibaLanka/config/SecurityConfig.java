@@ -43,11 +43,11 @@ public class SecurityConfig {
                 .exceptionHandling(ex -> ex.authenticationEntryPoint(jwtAuthEntryPoint))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        // Error dispatch must stay reachable, otherwise Spring Security's own
-                        // 403/404 responses are replaced by a 401 coming from /error.
+                        // /error must stay reachable, otherwise Security's own 403/404 responses
+                        // get replaced by a 401 coming from the error dispatch.
                         .requestMatchers("/error").permitAll()
-                        // Public endpoints. NOTE: matchers are per HTTP method so that a write
-                        // endpoint added under the same path later is NOT public by accident.
+                        // Method-scoped so that a write endpoint added under the same path later
+                        // is not public by accident.
                         .requestMatchers("/api/auth/login", "/api/auth/register").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/packages", "/api/packages/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/reviews", "/api/reviews/**").permitAll()
@@ -55,9 +55,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/journal/published", "/api/journal/published/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/contact").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/bookings/track").permitAll()
-                        // Admin only
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
-                        // Anything else (customer booking/review submission, own bookings): authenticated
                         .anyRequest().authenticated()
                 )
                 .authenticationProvider(authenticationProvider())

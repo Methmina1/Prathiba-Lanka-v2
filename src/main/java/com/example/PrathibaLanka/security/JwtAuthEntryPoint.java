@@ -18,7 +18,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class JwtAuthEntryPoint implements AuthenticationEntryPoint {
 
-    private final ObjectMapper objectMapper;   // injected from Spring context
+    private final ObjectMapper objectMapper;
 
     @Override
     public void commence(HttpServletRequest request,

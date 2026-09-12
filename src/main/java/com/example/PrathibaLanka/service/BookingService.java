@@ -35,12 +35,8 @@ public class BookingService {
     private final EmailService emailService;
 
     /**
-     * Step 1: Customer requests a booking.
-     * - The acting customer is taken from the authenticated principal (never trusted from the body).
-     * - Validate package exists, is ACTIVE, and has capacity.
-     * - Generate a unique PIN.
-     * - Save booking with status PENDING.
-     * - Send pending email with PIN.
+     * Creates a PENDING booking for the authenticated customer and mails the PIN.
+     * {@code dto.customerId}, when present, must match the authenticated customer.
      */
     public BookingRequest requestBooking(BookingRequestDTO dto, Long authenticatedCustomerId) {
         Long customerId = OwnershipGuard.requireOwnCustomerId(dto.getCustomerId(), authenticatedCustomerId);
@@ -64,7 +60,6 @@ public class BookingService {
                     + pkg.getMaxCapacity() + ").");
         }
 
-        // Generate unique PIN (retry if collision – extremely unlikely)
         String pin;
         do {
             pin = PinGenerator.generate();
@@ -81,17 +76,11 @@ public class BookingService {
 
         BookingRequest saved = bookingRepo.save(booking);
 
-        // Send pending email (logged even if mail not configured)
         emailService.sendBookingPendingEmail(saved);
 
         return saved;
     }
 
-    /**
-     * Step 2: Admin confirms a booking.
-     * - Set status = CONFIRMED, confirmedPrice, confirmedDate, confirmedBy.
-     * - Send confirmation email with all details.
-     */
     public BookingRequest confirmBooking(Long bookingId, BigDecimal confirmedPrice,
                                          LocalDate confirmedDate, Long adminId) {
         BookingRequest booking = bookingRepo.findById(bookingId)
@@ -119,9 +108,6 @@ public class BookingService {
         return saved;
     }
 
-    /**
-     * Step 3: Admin rejects a booking.
-     */
     public BookingRequest rejectBooking(Long bookingId) {
         BookingRequest booking = bookingRepo.findById(bookingId)
                 .orElseThrow(() -> new ResourceNotFoundException("Booking not found with id: " + bookingId));
@@ -134,35 +120,22 @@ public class BookingService {
         return bookingRepo.save(booking);
     }
 
-    /**
-     * Step 4: Public tracking – customer uses PIN to view status.
-     */
     @Transactional(readOnly = true)
     public BookingRequest trackBooking(String pinCode) {
         return bookingRepo.findByPinCode(pinCode)
                 .orElseThrow(() -> new ResourceNotFoundException("No booking found for PIN: " + pinCode));
     }
 
-    /**
-     * Utility: list all bookings (for admin).
-     */
     @Transactional(readOnly = true)
     public List<BookingRequest> getAllBookings() {
         return bookingRepo.findAll();
     }
 
-    /**
-     * Utility: list the bookings of one customer (own-bookings endpoint).
-     * Filtering happens in the database instead of loading the whole table into memory.
-     */
     @Transactional(readOnly = true)
     public List<BookingRequest> getBookingsForCustomer(Long customerId) {
         return bookingRepo.findByCustomer_CustomerId(customerId);
     }
 
-    /**
-     * Utility: list bookings by status (for admin).
-     */
     @Transactional(readOnly = true)
     public List<BookingRequest> getBookingsByStatus(BookingStatus status) {
         return bookingRepo.findByStatus(status);

@@ -27,16 +27,10 @@ public class ContactQueryService {
     private final AdminRepository adminRepo;
     private final EmailService emailService;
 
-    /**
-     * Step 1: Customer submits a query.
-     * - Save query with status NEW.
-     * - Send auto-response email.
-     * - Mark autoResponseSent = true.
-     */
+    /** Accepts guest queries too: customerId is optional. */
     public ContactQuery submitQuery(QueryRequestDTO dto) {
         ContactQuery query = new ContactQuery();
 
-        // If a customerId is provided, link it; otherwise leave null (guest query)
         if (dto.getCustomerId() != null) {
             Customer customer = customerRepo.findById(dto.getCustomerId())
                     .orElseThrow(() -> new ResourceNotFoundException(
@@ -54,16 +48,10 @@ public class ContactQueryService {
 
         ContactQuery saved = queryRepo.save(query);
 
-        // Send auto-response (and log it). The flag records the real outcome: it used to be set
-        // to true even when the mail server rejected or was unreachable, which made the API lie.
-        boolean autoResponseSent = emailService.sendAutoResponse(saved);
-        saved.setAutoResponseSent(autoResponseSent);
+        saved.setAutoResponseSent(emailService.sendAutoResponse(saved));
         return queryRepo.save(saved);
     }
 
-    /**
-     * Step 2: Admin responds to a query.
-     */
     public ContactQuery respondToQuery(Long queryId, String adminResponse, Long adminId) {
         ContactQuery query = queryRepo.findById(queryId)
                 .orElseThrow(() -> new ResourceNotFoundException(
@@ -85,17 +73,11 @@ public class ContactQueryService {
         return queryRepo.save(query);
     }
 
-    /**
-     * Utility: list all queries (for admin dashboard).
-     */
     @Transactional(readOnly = true)
     public List<ContactQuery> getAllQueries() {
         return queryRepo.findAll();
     }
 
-    /**
-     * Utility: list only new (unresponded) queries.
-     */
     @Transactional(readOnly = true)
     public List<ContactQuery> getNewQueries() {
         return queryRepo.findByStatus(QueryStatus.NEW);

@@ -26,9 +26,8 @@ public class ReviewService {
     private final TravelPackageRepository packageRepo;
 
     /**
-     * Customer submits a review.
-     * - The reviewing customer is taken from the authenticated principal (never trusted from the body).
-     * - If packageId is null → it's a general company review.
+     * Creates a review written by the authenticated customer. Without a packageId the review is
+     * treated as a general company review.
      */
     public Review submitReview(ReviewRequestDTO dto, Long authenticatedCustomerId) {
         Long customerId = OwnershipGuard.requireOwnCustomerId(dto.getCustomerId(), authenticatedCustomerId);
@@ -46,7 +45,6 @@ public class ReviewService {
         review.setRating(dto.getRating());
         review.setComment(dto.getComment());
 
-        // Optional: link to a specific package
         if (dto.getPackageId() != null) {
             TravelPackage pkg = packageRepo.findById(dto.getPackageId())
                     .orElseThrow(() -> new ResourceNotFoundException(
@@ -57,26 +55,16 @@ public class ReviewService {
         return reviewRepo.save(review);
     }
 
-    /**
-     * Public: list all reviews (for the Review page).
-     */
     @Transactional(readOnly = true)
     public List<Review> getAllReviews() {
         return reviewRepo.findAll();
     }
 
-    /**
-     * Public: list reviews for a specific package.
-     */
     @Transactional(readOnly = true)
     public List<Review> getReviewsByPackage(Long packageId) {
-        // Add this method to ReviewRepository (see below)
         return reviewRepo.findByTravelPackage_PackageId(packageId);
     }
 
-    /**
-     * Admin: delete a review (moderation).
-     */
     public void deleteReview(Long reviewId) {
         Review review = reviewRepo.findById(reviewId)
                 .orElseThrow(() -> new ResourceNotFoundException(

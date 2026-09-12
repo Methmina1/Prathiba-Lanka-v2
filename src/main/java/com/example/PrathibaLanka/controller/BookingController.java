@@ -25,10 +25,7 @@ public class BookingController {
 
     // ---------------- CUSTOMER ----------------
 
-    /**
-     * Customers submit a booking request. Requires a customer token: the booking is always created
-     * for the authenticated customer (a customerId in the body must match it, otherwise 403).
-     */
+    /** Booking is created for the authenticated customer; a mismatched customerId is rejected (403). */
     @PostMapping("/api/bookings/request")
     @PreAuthorize("hasRole('CUSTOMER')")
     public ResponseEntity<BookingResponseDTO> requestBooking(@Valid @RequestBody BookingRequestDTO dto,
@@ -37,13 +34,12 @@ public class BookingController {
         return ResponseEntity.status(HttpStatus.CREATED).body(toDTO(booking));
     }
 
-    /** Public tracking by PIN. */
+    /** Public: tracked with the PIN, no token required. */
     @GetMapping("/api/bookings/track")
     public ResponseEntity<BookingResponseDTO> track(@RequestParam String pin) {
         return ResponseEntity.ok(toDTO(bookingService.trackBooking(pin)));
     }
 
-    /** A logged-in customer's own bookings. */
     @GetMapping("/api/customer/bookings")
     @PreAuthorize("hasRole('CUSTOMER')")
     public ResponseEntity<List<BookingResponseDTO>> myBookings(@AuthenticationPrincipal UserPrincipal principal) {

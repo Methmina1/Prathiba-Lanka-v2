@@ -27,7 +27,7 @@ public class EmailService {
     private final EmailLogRepository emailLogRepository;
 
     /**
-     * Sends the message and always writes an {@link EmailLog} row, so a failed delivery is
+     * Sends the message and always writes an {@link EmailLog} row, so failed deliveries are
      * recorded instead of silently disappearing.
      *
      * @return true only if the mail server accepted the message

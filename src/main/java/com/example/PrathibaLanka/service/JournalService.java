@@ -16,32 +16,26 @@ import java.util.List;
 @Transactional
 public class JournalService {
 
+    private static final String PUBLISHED = "PUBLISHED";
+    private static final String DRAFT = "DRAFT";
+
     private final JournalPostRepository journalRepo;
 
-    /**
-     * Create a new journal post (admin only).
-     * Defaults to DRAFT status.
-     */
     public JournalPost createPost(JournalRequestDTO dto) {
         JournalPost post = new JournalPost();
         post.setTitle(dto.getTitle());
         post.setDescription(dto.getDescription());
         post.setContent(dto.getContent());
         post.setCoverImageUrl(dto.getCoverImageUrl());
+        post.setStatus(dto.getStatus() != null ? normalizeStatus(dto.getStatus()) : DRAFT);
 
-        // Default to DRAFT unless explicitly provided
-        post.setStatus(dto.getStatus() != null ? normalizeStatus(dto.getStatus()) : "DRAFT");
-
-        if ("PUBLISHED".equals(post.getStatus())) {
+        if (PUBLISHED.equals(post.getStatus())) {
             post.publish();
         }
 
         return journalRepo.save(post);
     }
 
-    /**
-     * Update an existing journal post.
-     */
     public JournalPost updatePost(Long journalId, JournalRequestDTO dto) {
         JournalPost post = journalRepo.findById(journalId)
                 .orElseThrow(() -> new ResourceNotFoundException(
@@ -55,12 +49,11 @@ public class JournalService {
         if (dto.getStatus() != null) {
             String newStatus = normalizeStatus(dto.getStatus());
             post.setStatus(newStatus);
-            if ("PUBLISHED".equals(newStatus)) {
+            if (PUBLISHED.equals(newStatus)) {
                 if (post.getPublishedAt() == null) {
                     post.setPublishedAt(LocalDateTime.now());
                 }
-            } else if ("DRAFT".equals(newStatus)) {
-                // Moving back to draft: the post is no longer published.
+            } else if (DRAFT.equals(newStatus)) {
                 post.setPublishedAt(null);
             }
         }
@@ -68,14 +61,11 @@ public class JournalService {
         return journalRepo.save(post);
     }
 
-    /** Journal status is free text in the schema; keep a single canonical casing. */
+    /** Status is plain text in the schema, so keep one canonical casing. */
     private String normalizeStatus(String status) {
         return status.trim().toUpperCase();
     }
 
-    /**
-     * Publish a post (sets status=PUBLISHED and publishedAt=now).
-     */
     public JournalPost publishPost(Long journalId) {
         JournalPost post = journalRepo.findById(journalId)
                 .orElseThrow(() -> new ResourceNotFoundException(
@@ -84,9 +74,6 @@ public class JournalService {
         return journalRepo.save(post);
     }
 
-    /**
-     * Unpublish a post (sets status=DRAFT).
-     */
     public JournalPost unpublishPost(Long journalId) {
         JournalPost post = journalRepo.findById(journalId)
                 .orElseThrow(() -> new ResourceNotFoundException(
@@ -95,9 +82,6 @@ public class JournalService {
         return journalRepo.save(post);
     }
 
-    /**
-     * Delete a journal post.
-     */
     public void deletePost(Long journalId) {
         JournalPost post = journalRepo.findById(journalId)
                 .orElseThrow(() -> new ResourceNotFoundException(
@@ -105,9 +89,6 @@ public class JournalService {
         journalRepo.delete(post);
     }
 
-    /**
-     * Fetch a single post by ID.
-     */
     @Transactional(readOnly = true)
     public JournalPost getPostById(Long journalId) {
         return journalRepo.findById(journalId)
@@ -115,17 +96,11 @@ public class JournalService {
                         "Journal post not found with id: " + journalId));
     }
 
-    /**
-     * Public: list only PUBLISHED journal posts (for the Journal page).
-     */
     @Transactional(readOnly = true)
     public List<JournalPost> getPublishedPosts() {
-        return journalRepo.findByStatus("PUBLISHED");
+        return journalRepo.findByStatus(PUBLISHED);
     }
 
-    /**
-     * Admin: list all journal posts (drafts + published).
-     */
     @Transactional(readOnly = true)
     public List<JournalPost> getAllPosts() {
         return journalRepo.findAll();

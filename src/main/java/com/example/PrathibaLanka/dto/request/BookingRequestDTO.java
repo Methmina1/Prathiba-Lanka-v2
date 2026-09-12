@@ -9,10 +9,7 @@ import java.time.LocalDate;
 @Data
 public class BookingRequestDTO {
 
-    /**
-     * Optional: the acting customer is taken from the authenticated JWT. If this field is sent
-     * it must match the authenticated customer, otherwise the request is rejected with 403.
-     */
+    /** Optional; when sent it must match the authenticated customer, otherwise 403. */
     private Long customerId;
 
     @NotNull(message = "Package ID is required")

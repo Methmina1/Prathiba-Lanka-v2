@@ -22,11 +22,6 @@ public class GalleryService {
     private final TravelPackageRepository packageRepo;
     private final AdminRepository adminRepo;
 
-    /**
-     * Upload/add a new gallery image (admin only).
-     * - imageUrl is provided by the frontend (URL string; file upload is a separate concern).
-     * - packageId is optional.
-     */
     public GalleryImage uploadImage(String imageUrl, String caption, Long packageId, Long adminId) {
         Admin admin = adminRepo.findById(adminId)
                 .orElseThrow(() -> new ResourceNotFoundException(
@@ -47,10 +42,7 @@ public class GalleryService {
         return galleryRepo.save(image);
     }
 
-    /**
-     * Update image URL, caption or package association of an existing image.
-     * Only the fields that are provided (non-null) are changed.
-     */
+    /** Partial update: only the non-null arguments are applied. */
     public GalleryImage updateImage(Long imageId, String imageUrl, String caption, Long packageId) {
         GalleryImage image = galleryRepo.findById(imageId)
                 .orElseThrow(() -> new ResourceNotFoundException(
@@ -74,9 +66,6 @@ public class GalleryService {
         return galleryRepo.save(image);
     }
 
-    /**
-     * Delete a gallery image.
-     */
     public void deleteImage(Long imageId) {
         GalleryImage image = galleryRepo.findById(imageId)
                 .orElseThrow(() -> new ResourceNotFoundException(
@@ -84,17 +73,11 @@ public class GalleryService {
         galleryRepo.delete(image);
     }
 
-    /**
-     * Public: list all gallery images (for the Gallery page).
-     */
     @Transactional(readOnly = true)
     public List<GalleryImage> getAllImages() {
         return galleryRepo.findAll();
     }
 
-    /**
-     * Public: get a single image by ID.
-     */
     @Transactional(readOnly = true)
     public GalleryImage getImageById(Long imageId) {
         return galleryRepo.findById(imageId)
@@ -102,9 +85,6 @@ public class GalleryService {
                         "Image not found with id: " + imageId));
     }
 
-    /**
-     * Public: list images for a specific package.
-     */
     @Transactional(readOnly = true)
     public List<GalleryImage> getImagesByPackage(Long packageId) {
         return galleryRepo.findByTravelPackage_PackageId(packageId);

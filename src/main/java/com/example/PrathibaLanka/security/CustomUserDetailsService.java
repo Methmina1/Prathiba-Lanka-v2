@@ -25,13 +25,11 @@ public class CustomUserDetailsService implements UserDetailsService {
     public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {
         String normalized = email == null ? "" : email.trim();
 
-        // Check admin first
         Optional<Admin> adminOpt = adminRepository.findByEmailIgnoreCase(normalized);
         if (adminOpt.isPresent()) {
             return UserPrincipal.fromAdmin(adminOpt.get());
         }
 
-        // Then check customer
         Optional<Customer> customerOpt = customerRepository.findByEmailIgnoreCase(normalized);
         if (customerOpt.isPresent()) {
             return UserPrincipal.fromCustomer(customerOpt.get());

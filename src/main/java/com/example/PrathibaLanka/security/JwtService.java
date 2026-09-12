@@ -26,10 +26,7 @@ public class JwtService {
 
     private final JwtProperties jwtProperties;
 
-    /**
-     * Fail fast on a missing or too-short signing secret. HS256 needs at least 256 bits (32 bytes);
-     * without this check the application would only blow up later, on the first login attempt.
-     */
+    /** HS256 needs at least 256 bits; fail at startup instead of on the first login. */
     @PostConstruct
     void validateSecret() {
         String secret = jwtProperties.getSecret();

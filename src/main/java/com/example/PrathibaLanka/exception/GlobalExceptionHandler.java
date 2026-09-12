@@ -25,12 +25,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Central error handling.
- *
- * <p>IMPORTANT: an {@code @ExceptionHandler(Exception.class)} catch-all takes precedence over
- * Spring's built-in exception resolvers, so every client error (validation failure, missing
- * parameter, bad credentials, ...) MUST be mapped explicitly here - otherwise those client
- * errors are reported as HTTP 500.
+ * A catch-all {@code @ExceptionHandler(Exception.class)} takes precedence over Spring's built-in
+ * handlers, so every client error has to be mapped here explicitly - otherwise it surfaces as 500.
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -55,7 +51,6 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.FORBIDDEN, "Forbidden", ex.getMessage(), null, request);
     }
 
-    /** Bean-validation failures on @Valid @RequestBody arguments -> 400 (not 500). */
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException ex,
                                                                 HttpServletRequest request) {
@@ -66,7 +61,6 @@ public class GlobalExceptionHandler {
                 "Request validation failed.", details, request);
     }
 
-    /** Validation failures on @Validated parameters (query params, path variables) -> 400. */
     @ExceptionHandler(ConstraintViolationException.class)
     public ResponseEntity<Map<String, Object>> handleConstraintViolation(ConstraintViolationException ex,
                                                                          HttpServletRequest request) {
@@ -77,7 +71,6 @@ public class GlobalExceptionHandler {
                 "Request validation failed.", details, request);
     }
 
-    /** Malformed JSON / unparsable date or number in the body -> 400. */
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<Map<String, Object>> handleUnreadable(HttpMessageNotReadableException ex,
                                                                 HttpServletRequest request) {
@@ -85,7 +78,6 @@ public class GlobalExceptionHandler {
                 "Request body is missing or malformed.", null, request);
     }
 
-    /** Missing required query parameter -> 400. */
     @ExceptionHandler(MissingServletRequestParameterException.class)
     public ResponseEntity<Map<String, Object>> handleMissingParam(MissingServletRequestParameterException ex,
                                                                   HttpServletRequest request) {
@@ -93,7 +85,6 @@ public class GlobalExceptionHandler {
                 "Required parameter '" + ex.getParameterName() + "' is missing.", null, request);
     }
 
-    /** Wrong parameter type, e.g. /api/packages/abc -> 400. */
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     public ResponseEntity<Map<String, Object>> handleTypeMismatch(MethodArgumentTypeMismatchException ex,
                                                                   HttpServletRequest request) {
@@ -101,7 +92,6 @@ public class GlobalExceptionHandler {
                 "Parameter '" + ex.getName() + "' has an invalid value.", null, request);
     }
 
-    /** Unknown URL with no static resource behind it -> 404 (not 500). */
     @ExceptionHandler(NoResourceFoundException.class)
     public ResponseEntity<Map<String, Object>> handleNoResource(NoResourceFoundException ex,
                                                                 HttpServletRequest request) {
@@ -115,14 +105,13 @@ public class GlobalExceptionHandler {
                 "HTTP method '" + ex.getMethod() + "' is not supported for this endpoint.", null, request);
     }
 
-    /** Bad credentials / expired session -> 401 (not 500). */
+    /** Bad credentials from the AuthenticationManager must not become a 500. */
     @ExceptionHandler(AuthenticationException.class)
     public ResponseEntity<Map<String, Object>> handleAuthentication(AuthenticationException ex,
                                                                     HttpServletRequest request) {
         return build(HttpStatus.UNAUTHORIZED, "Unauthorized", "Invalid email or password.", null, request);
     }
 
-    /** Authenticated but not allowed (role or ownership) -> 403 (not 500). */
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<Map<String, Object>> handleAccessDenied(AccessDeniedException ex,
                                                                   HttpServletRequest request) {
@@ -130,7 +119,6 @@ public class GlobalExceptionHandler {
                 "You do not have permission to perform this action.", null, request);
     }
 
-    /** Unique constraint / referential integrity violations -> 409 (not 500). */
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<Map<String, Object>> handleDataIntegrity(DataIntegrityViolationException ex,
                                                                     HttpServletRequest request) {
@@ -139,10 +127,7 @@ public class GlobalExceptionHandler {
                 "The request conflicts with existing data (duplicate or referenced record).", null, request);
     }
 
-    /**
-     * Last resort. The stack trace is logged server-side only - exception details are never
-     * returned to the client (they leak SQL, class names and internal state).
-     */
+    /** Last resort. Details stay in the log; the client gets a generic message. */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleGenericException(Exception ex,
                                                                      HttpServletRequest request) {

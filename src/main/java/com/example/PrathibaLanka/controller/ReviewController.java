@@ -35,7 +35,7 @@ public class ReviewController {
 
     // ---------------- CUSTOMER ----------------
 
-    /** Customers submit a review. Requires a customer token; the review is attributed to it. */
+    /** Review is attributed to the authenticated customer; a mismatched customerId is rejected (403). */
     @PostMapping("/api/reviews")
     @PreAuthorize("hasRole('CUSTOMER')")
     public ResponseEntity<ReviewResponseDTO> submit(@Valid @RequestBody ReviewRequestDTO dto,
