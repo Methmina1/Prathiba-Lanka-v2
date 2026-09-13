@@ -112,11 +112,48 @@ powershell -ExecutionPolicy Bypass -File scripts/fake-smtp.ps1 -Port 2525
 `scripts/api-tests.ps1` covers every endpoint plus validation, authorization and ownership cases,
 and cleans up the data it creates. `mvn test` runs the context-load test.
 
+## Concurrency
+
+Request handling is concurrent by default (Tomcat threads + a HikariCP pool). Three things are
+handled explicitly:
+
+- **Notification mail is asynchronous.** `BookingService` / `ContactQueryService` publish an event;
+  `MailNotificationListener` reacts with `@TransactionalEventListener(AFTER_COMMIT)` and `@Async`,
+  so mail is sent *after* the transaction commits (a rolled-back booking never mails a PIN) and on
+  the `mailExecutor` pool instead of the request thread. Every attempt is still written to
+  `email_log`.
+  Consequence: `POST /api/contact` returns `autoResponseSent: false`; the mail worker flips it to the
+  real outcome a moment later.
+- **Capacity is enforced under a row lock.** `requestBooking` loads the package with
+  `findByIdForUpdate` (`SELECT ... FOR UPDATE`) and compares
+  `maxCapacity` against outstanding travelers (`PENDING` + `CONFIRMED`). Requests hold capacity
+  until they are rejected, so concurrent bookings for the same package serialize and cannot
+  oversubscribe it.
+- **Bookings use optimistic locking.** `BookingRequest.version` (`@Version`) makes concurrent updates
+  — e.g. two admins confirming the same booking — conflict instead of overwriting. The loser gets
+  `409 Conflict`.
+
+`scripts/api-tests.ps1` includes a concurrency section: 5 parallel bookings against a 3-seat package
+(exactly 3 accepted) and 2 parallel confirmations of one booking (one wins, one 409).
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push to `main`/`updates` and on pull requests into `main`:
+
+| Job | What it does |
+|---|---|
+| `Compile & test` | `mvn -B -ntp clean verify` against a `postgres:15` service container; uploads surefire reports + the application jar |
+| `API endpoint tests` | boots the built jar against the same Postgres, points mail at `scripts/fake-smtp.ps1`, waits for readiness, then runs `scripts/api-tests.ps1` |
+
+Branch protection on `main` should require both checks. Mail settings, the test database and the
+bootstrap admin come from the workflow `env:` block (see `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`).
+
 ## Known gaps
 
 - Schema comes from Hibernate `ddl-auto=update`; use Flyway or Liquibase before production.
 - No rate limiting on login, PIN tracking or the public contact form.
 - List endpoints return everything (`findAll`) — add pagination as data grows.
 - `spring.jpa.show-sql=true` is left on for development.
-- Capacity is checked per request, not against already-confirmed bookings.
 - Tokens are stateless with no revocation or refresh.
+- Scheduled work (reminders, stale pending bookings) is not implemented yet; when it is added,
+  running more than one instance needs a lock (ShedLock) so jobs do not run twice.

@@ -55,4 +55,13 @@ public class BookingRequest {
 
     @UpdateTimestamp
     private LocalDateTime updatedAt;
+
+    /**
+     * Optimistic lock: concurrent updates of the same booking (e.g. two admins confirming it)
+     * conflict instead of overwriting each other. The default keeps existing rows usable when
+     * ddl-auto adds the column.
+     */
+    @Version
+    @Column(nullable = false, columnDefinition = "bigint default 0")
+    private Long version;
 }

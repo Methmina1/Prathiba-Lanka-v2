@@ -1,10 +1,12 @@
 package com.example.PrathibaLanka.exception;
 
+import jakarta.persistence.OptimisticLockException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -117,6 +119,18 @@ public class GlobalExceptionHandler {
                                                                   HttpServletRequest request) {
         return build(HttpStatus.FORBIDDEN, "Forbidden",
                 "You do not have permission to perform this action.", null, request);
+    }
+
+    /**
+     * Two clients updated the same row concurrently (see {@code @Version} on BookingRequest):
+     * report a conflict instead of a 500, so the client can reload and retry.
+     */
+    @ExceptionHandler({OptimisticLockingFailureException.class, OptimisticLockException.class})
+    public ResponseEntity<Map<String, Object>> handleOptimisticLock(Exception ex,
+                                                                   HttpServletRequest request) {
+        log.warn("Concurrent modification on {} {}: {}", request.getMethod(), request.getRequestURI(), ex.getMessage());
+        return build(HttpStatus.CONFLICT, "Conflict",
+                "This record was changed by another request. Reload it and try again.", null, request);
     }
 
     @ExceptionHandler(DataIntegrityViolationException.class)

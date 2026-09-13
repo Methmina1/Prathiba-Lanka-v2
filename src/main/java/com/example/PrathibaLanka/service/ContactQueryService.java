@@ -5,12 +5,14 @@ import com.example.PrathibaLanka.entity.Admin;
 import com.example.PrathibaLanka.entity.ContactQuery;
 import com.example.PrathibaLanka.entity.Customer;
 import com.example.PrathibaLanka.enums.QueryStatus;
+import com.example.PrathibaLanka.event.QuerySubmittedEvent;
 import com.example.PrathibaLanka.exception.BadRequestException;
 import com.example.PrathibaLanka.exception.ResourceNotFoundException;
 import com.example.PrathibaLanka.repository.AdminRepository;
 import com.example.PrathibaLanka.repository.ContactQueryRepository;
 import com.example.PrathibaLanka.repository.CustomerRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,7 +27,7 @@ public class ContactQueryService {
     private final ContactQueryRepository queryRepo;
     private final CustomerRepository customerRepo;
     private final AdminRepository adminRepo;
-    private final EmailService emailService;
+    private final ApplicationEventPublisher events;
 
     /** Accepts guest queries too: customerId is optional. */
     public ContactQuery submitQuery(QueryRequestDTO dto) {
@@ -48,8 +50,11 @@ public class ContactQueryService {
 
         ContactQuery saved = queryRepo.save(query);
 
-        saved.setAutoResponseSent(emailService.sendAutoResponse(saved));
-        return queryRepo.save(saved);
+        // The auto-response is sent after this transaction commits, on the mail pool. The returned
+        // query therefore still shows autoResponseSent = false; the mail worker flips it.
+        events.publishEvent(new QuerySubmittedEvent(saved.getQueryId()));
+
+        return saved;
     }
 
     public ContactQuery respondToQuery(Long queryId, String adminResponse, Long adminId) {
