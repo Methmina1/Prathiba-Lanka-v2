@@ -7,6 +7,8 @@ import com.example.PrathibaLanka.entity.Customer;
 import com.example.PrathibaLanka.entity.TravelPackage;
 import com.example.PrathibaLanka.enums.BookingStatus;
 import com.example.PrathibaLanka.enums.PackageStatus;
+import com.example.PrathibaLanka.event.BookingConfirmedEvent;
+import com.example.PrathibaLanka.event.BookingCreatedEvent;
 import com.example.PrathibaLanka.exception.BadRequestException;
 import com.example.PrathibaLanka.exception.ResourceNotFoundException;
 import com.example.PrathibaLanka.repository.AdminRepository;
@@ -16,6 +18,7 @@ import com.example.PrathibaLanka.repository.TravelPackageRepository;
 import com.example.PrathibaLanka.security.OwnershipGuard;
 import com.example.PrathibaLanka.util.PinGenerator;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,15 +31,22 @@ import java.util.List;
 @Transactional
 public class BookingService {
 
+    /** Requests hold capacity until they are rejected, so the capacity check sees them. */
+    private static final List<BookingStatus> OUTSTANDING_STATUSES =
+            List.of(BookingStatus.PENDING, BookingStatus.CONFIRMED);
+
     private final BookingRequestRepository bookingRepo;
     private final TravelPackageRepository packageRepo;
     private final CustomerRepository customerRepo;
     private final AdminRepository adminRepo;
-    private final EmailService emailService;
+    private final ApplicationEventPublisher events;
 
     /**
-     * Creates a PENDING booking for the authenticated customer and mails the PIN.
+     * Creates a PENDING booking for the authenticated customer.
      * {@code dto.customerId}, when present, must match the authenticated customer.
+     *
+     * <p>The package row is locked for the duration of the transaction, which serializes the
+     * capacity check and the insert so concurrent requests cannot oversubscribe a package.
      */
     public BookingRequest requestBooking(BookingRequestDTO dto, Long authenticatedCustomerId) {
         Long customerId = OwnershipGuard.requireOwnCustomerId(dto.getCustomerId(), authenticatedCustomerId);
@@ -44,7 +54,7 @@ public class BookingService {
         Customer customer = customerRepo.findById(customerId)
                 .orElseThrow(() -> new ResourceNotFoundException("Customer not found with id: " + customerId));
 
-        TravelPackage pkg = packageRepo.findById(dto.getPackageId())
+        TravelPackage pkg = packageRepo.findByIdForUpdate(dto.getPackageId())
                 .orElseThrow(() -> new ResourceNotFoundException("Package not found with id: " + dto.getPackageId()));
 
         if (pkg.getStatus() != PackageStatus.ACTIVE) {
@@ -55,9 +65,12 @@ public class BookingService {
             throw new BadRequestException("Number of travelers must be at least 1.");
         }
 
-        if (pkg.getMaxCapacity() != null && dto.getNumTravelers() > pkg.getMaxCapacity()) {
-            throw new BadRequestException("Number of travelers exceeds package capacity (max: "
-                    + pkg.getMaxCapacity() + ").");
+        if (pkg.getMaxCapacity() != null) {
+            long outstanding = bookingRepo.sumTravelersByStatusIn(pkg.getPackageId(), OUTSTANDING_STATUSES);
+            if (outstanding + dto.getNumTravelers() > pkg.getMaxCapacity()) {
+                throw new BadRequestException("Number of travelers exceeds the remaining capacity of this package"
+                        + " (max: " + pkg.getMaxCapacity() + ", already requested: " + outstanding + ").");
+            }
         }
 
         String pin;
@@ -76,7 +89,7 @@ public class BookingService {
 
         BookingRequest saved = bookingRepo.save(booking);
 
-        emailService.sendBookingPendingEmail(saved);
+        events.publishEvent(new BookingCreatedEvent(saved.getBookingId()));
 
         return saved;
     }
@@ -103,7 +116,7 @@ public class BookingService {
 
         BookingRequest saved = bookingRepo.save(booking);
 
-        emailService.sendBookingConfirmedEmail(saved);
+        events.publishEvent(new BookingConfirmedEvent(saved.getBookingId()));
 
         return saved;
     }

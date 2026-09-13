@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     End-to-end API test for the PrathibaLanka Spring Boot backend.
 
@@ -33,12 +33,16 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Net.Http
+# Windows PowerShell 5.1 needs this assembly loaded explicitly; PowerShell 7 already ships it.
+try { Add-Type -AssemblyName System.Net.Http -ErrorAction Stop } catch { }
 
 $script:Pass     = 0
 $script:Fail     = 0
 $script:Failures = New-Object System.Collections.ArrayList
-$script:Http     = New-Object System.Net.Http.HttpClient
+# The concurrency checks fire several requests at once, so the client must not queue them.
+$httpHandler = New-Object System.Net.Http.HttpClientHandler
+$httpHandler.MaxConnectionsPerServer = 100
+$script:Http     = New-Object System.Net.Http.HttpClient($httpHandler)
 $script:Http.Timeout = [TimeSpan]::FromSeconds(60)
 $script:RunId    = Get-Date -Format 'yyyyMMddHHmmss'
 
@@ -112,6 +116,63 @@ function Section([string]$Title) {
     Write-Host ''
     Write-Host "=== $Title " -ForegroundColor Cyan -NoNewline
     Write-Host ('=' * [Math]::Max(4, 64 - $Title.Length)) -ForegroundColor Cyan
+}
+
+# Fires Count requests before waiting for any of them, so they really are in flight together.
+function Invoke-Concurrent {
+    param(
+        [string]$Method,
+        [string]$Path,
+        $Body,
+        [string]$Token,
+        [int]$Count = 2
+    )
+    $tasks = New-Object System.Collections.ArrayList
+    for ($i = 0; $i -lt $Count; $i++) {
+        $methodObj = New-Object System.Net.Http.HttpMethod($Method.ToUpperInvariant())
+        $req = New-Object System.Net.Http.HttpRequestMessage($methodObj, "$BaseUrl$Path")
+        if ($null -ne $Body) {
+            $json = if ($Body -is [string]) { $Body } else { $Body | ConvertTo-Json -Depth 6 }
+            $req.Content = New-Object System.Net.Http.StringContent($json, [System.Text.Encoding]::UTF8, 'application/json')
+        }
+        if ($Token) {
+            $req.Headers.Authorization = New-Object System.Net.Http.Headers.AuthenticationHeaderValue('Bearer', $Token)
+        }
+        [void]$tasks.Add($script:Http.SendAsync($req))
+    }
+    $results = foreach ($t in $tasks) {
+        $resp = $t.Result
+        [pscustomobject]@{ Status = [int]$resp.StatusCode; Body = $resp.Content.ReadAsStringAsync().Result }
+    }
+    return @($results)
+}
+
+function Wait-Until {
+    param([scriptblock]$Condition, [int]$TimeoutSeconds = 15, [int]$IntervalMs = 500)
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        if (& $Condition) { return $true }
+        Start-Sleep -Milliseconds $IntervalMs
+    } while ((Get-Date) -lt $deadline)
+    return $false
+}
+
+# For assertions that need time: async mail, for example, is sent after the response was written.
+function Test-Condition {
+    param(
+        [string]$Name,
+        [scriptblock]$Check,
+        [string]$CheckDesc = '',
+        [int]$TimeoutSeconds = 15
+    )
+    if (Wait-Until -Condition $Check -TimeoutSeconds $TimeoutSeconds) {
+        $script:Pass++
+        Write-Host ("  [PASS] {0,-56} {1}" -f $Name, "OK - $CheckDesc") -ForegroundColor Green
+    } else {
+        $script:Fail++
+        [void]$script:Failures.Add("$Name -> not satisfied within ${TimeoutSeconds}s - $CheckDesc")
+        Write-Host ("  [FAIL] {0,-56} {1}" -f $Name, "not satisfied within ${TimeoutSeconds}s") -ForegroundColor Red
+    }
 }
 
 # ---------------------------------------------------------------- 0. setup
@@ -343,7 +404,7 @@ Section '6. Contact queries'
 $query = Test-Api -Name 'POST /api/contact (public guest query) -> 201' -Method Post -Path '/api/contact' `
     -Body @{ name = 'Guest User'; email = "guest-$($RunId)@example.com"; phone = '0770000000'; `
              subject = "Question $($RunId)"; message = 'Do you have availability in December?' } -Expect 201 `
-    -Check { param($r) $r.Json.status -eq 'NEW' -and $r.Json.autoResponseSent -eq $true } -CheckDesc 'saved as NEW with auto-response flagged' -Capture
+    -Check { param($r) $r.Json.status -eq 'NEW' } -CheckDesc 'saved as NEW' -Capture
 $queryId = $query.Json.queryId
 
 Test-Api -Name 'POST /api/contact logged-in customer query -> 201' -Method Post -Path '/api/contact' `
@@ -358,6 +419,13 @@ Test-Api -Name 'GET /api/admin/queries (admin)' -Method Get -Path '/api/admin/qu
     -Check { param($r) $r.Json.queryId -contains $queryId } -CheckDesc 'new query is listed'
 Test-Api -Name 'GET /api/admin/queries?onlyNew=true (admin)' -Method Get -Path '/api/admin/queries?onlyNew=true' `
     -Token $adminToken -Expect 200 -Check { param($r) $r.Json.queryId -contains $queryId } -CheckDesc 'query is NEW'
+
+# Mail is sent asynchronously now, so the flag is written by the mail worker after the response.
+Test-Condition -Name 'async mail: autoResponseSent flips to true after the response' -TimeoutSeconds 20 -CheckDesc 'mail worker updated the query' -Check {
+    $r = Invoke-Api -Method Get -Path '/api/admin/queries' -Token $adminToken
+    ($r.Json | Where-Object { $_.queryId -eq $queryId }).autoResponseSent -eq $true
+}
+
 Test-Api -Name 'GET /api/admin/queries (no token) -> 401' -Method Get -Path '/api/admin/queries' -Expect 401
 Test-Api -Name 'GET /api/admin/queries (customer token) -> 403' -Method Get -Path '/api/admin/queries' `
     -Token $custAToken -Expect 403
@@ -487,9 +555,53 @@ Test-Api -Name 'DELETE /api/admin/reviews/{id} (admin) -> 204' -Method Delete -P
 Test-Api -Name 'DELETE same review twice -> 404' -Method Delete -Path "/api/admin/reviews/$reviewId" `
     -Token $adminToken -Expect 404
 
-# ---------------------------------------------------------------- 9. cleanup
+# ---------------------------------------------------------------- 9. concurrency
 
-Section '9. Cleanup (data created by this run)'
+Section '9. Concurrency (capacity lock + optimistic locking)'
+
+# A package whose entire capacity is contended: 5 parallel requests for 3 seats.
+$racePkg = Test-Api -Name 'POST /api/admin/packages (capacity 3, concurrency test)' -Method Post -Path '/api/admin/packages' `
+    -Token $adminToken -Expect 201 `
+    -Body @{ title = "Race Package $($RunId)"; destination = 'Raceland'; durationDays = 2; price = 100; maxCapacity = 3 } -Capture
+$racePkgId = $racePkg.Json.packageId
+
+$raceResults = Invoke-Concurrent -Method Post -Path '/api/bookings/request' -Token $custAToken -Count 5 `
+    -Body @{ packageId = $racePkgId; numTravelers = 1; preferredTravelDate = '2027-03-01' }
+$raceCodes = @($raceResults | ForEach-Object { $_.Status })
+$accepted  = @($raceCodes | Where-Object { $_ -eq 201 }).Count
+$refused   = @($raceCodes | Where-Object { $_ -eq 400 -or $_ -eq 409 }).Count
+$errors    = @($raceCodes | Where-Object { $_ -ge 500 }).Count
+
+Test-Condition -Name 'capacity lock: 5 parallel bookings produce no 5xx' -CheckDesc "codes: $($raceCodes -join ',')" `
+    -Check { $errors -eq 0 }
+Test-Condition -Name 'capacity lock: exactly the free seats are accepted' -CheckDesc "$accepted accepted, $refused refused" `
+    -Check { $accepted -eq 3 -and $refused -eq 2 }
+
+Test-Api -Name 'capacity lock: outstanding travelers never exceed capacity' -Method Get -Path '/api/admin/bookings' `
+    -Token $adminToken -Expect 200 `
+    -Check { param($r) (($r.Json | Where-Object { $_.destination -eq 'Raceland' -and $_.status -ne 'REJECTED' } | Measure-Object -Property numTravelers -Sum).Sum) -le 3 } `
+    -CheckDesc 'sum of outstanding travelers <= maxCapacity'
+
+# Optimistic locking: two admins confirming the same booking at the same moment.
+$raceBooking = Test-Api -Name 'POST booking (for double-confirm race)' -Method Post -Path '/api/bookings/request' `
+    -Token $custAToken -Expect 201 `
+    -Body @{ packageId = $pkgId; numTravelers = 1; preferredTravelDate = '2027-04-01' } -Capture
+$confirmResults = Invoke-Concurrent -Method Patch -Path "/api/admin/bookings/$($raceBooking.Json.bookingId)/confirm" `
+    -Token $adminToken -Count 2 -Body @{ confirmedPrice = 150; confirmedDate = '2027-03-20' }
+$confirmCodes = @($confirmResults | ForEach-Object { $_.Status })
+$wins   = @($confirmCodes | Where-Object { $_ -eq 200 }).Count
+$losses = @($confirmCodes | Where-Object { $_ -eq 400 -or $_ -eq 409 }).Count
+
+Test-Condition -Name 'optimistic lock: exactly one of two parallel confirms wins' -CheckDesc "codes: $($confirmCodes -join ',')" `
+    -Check { $wins -eq 1 -and $losses -eq 1 }
+Test-Api -Name 'booking is CONFIRMED exactly once after the race' -Method Get -Path '/api/admin/bookings?status=CONFIRMED' `
+    -Token $adminToken -Expect 200 `
+    -Check { param($r) @($r.Json | Where-Object { $_.bookingId -eq $raceBooking.Json.bookingId }).Count -eq 1 } `
+    -CheckDesc 'no duplicate confirmation'
+
+# ---------------------------------------------------------------- 10. cleanup
+
+Section '10. Cleanup (data created by this run)'
 
 Test-Api -Name 'DELETE package with bookings -> 409 conflict' -Method Delete -Path "/api/admin/packages/$pkgId" `
     -Token $adminToken -Expect 409 -Check { param($r) $r.Json.error -eq 'Conflict' } -CheckDesc 'FK conflict reported as 409 (was 500)'
