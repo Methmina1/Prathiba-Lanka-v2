@@ -264,36 +264,38 @@ Test-Api -Name 'malformed JSON body -> 400 (was 500)' -Method Post -Path '/api/a
 
 Section '3. Travel packages'
 
-Test-Api -Name 'GET /api/packages (public)' -Method Get -Path '/api/packages' -Expect 200 `
-    -Check { param($r) $r.Json.Count -ge 1 } -CheckDesc 'at least one active package'
+# The baseline package is created first: on a fresh database (CI) there are no packages at all,
+# so every public read check below has to assert against data this run created itself.
+$newPkg = Test-Api -Name 'POST /api/admin/packages (admin) -> 201' -Method Post -Path '/api/admin/packages' `
+    -Token $adminToken -Expect 201 `
+    -Body @{ title = "Test Package $($RunId)"; description = 'created by api-tests'; destination = "Bali $($RunId)"; `
+             durationDays = 3; price = 199.99; maxCapacity = 10; itinerary = 'Day 1: test'; status = 'ACTIVE' } `
+    -Check { param($r) $r.Json.status -eq 'ACTIVE' } -CheckDesc 'created as ACTIVE' -Capture
+$pkgId = $newPkg.Json.packageId
 
-Test-Api -Name 'GET /api/packages/{id} (public)' -Method Get -Path '/api/packages/1' -Expect 200 `
-    -Check { param($r) $r.Json.packageId -eq 1 } -CheckDesc 'returns the requested package'
+Test-Api -Name 'GET /api/packages (public)' -Method Get -Path '/api/packages' -Expect 200 `
+    -Check { param($r) $r.Json.packageId -contains $pkgId } -CheckDesc 'lists the active package'
+
+Test-Api -Name 'GET /api/packages/{id} (public)' -Method Get -Path "/api/packages/$pkgId" -Expect 200 `
+    -Check { param($r) $r.Json.packageId -eq $pkgId } -CheckDesc 'returns the requested package'
 
 Test-Api -Name 'GET /api/packages/{unknown} -> 404' -Method Get -Path '/api/packages/999999' -Expect 404 `
     -Check { param($r) $r.Json.error -eq 'Not Found' } -CheckDesc 'structured 404 body'
 Test-Api -Name 'GET /api/packages/{non-numeric} -> 400 (was 500)' -Method Get -Path '/api/packages/abc' -Expect 400
 Test-Api -Name 'GET /api/packages/search (public)' -Method Get -Path '/api/packages/search?destination=Bali' -Expect 200 `
-    -Check { param($r) $r.Json.Count -ge 1 } -CheckDesc 'finds Bali package'
+    -Check { param($r) $r.Json.packageId -contains $pkgId } -CheckDesc 'finds the package this run created'
 Test-Api -Name 'GET /api/packages/search without param -> 400 (was 500)' -Method Get -Path '/api/packages/search' -Expect 400
 Test-Api -Name 'GET /api/packages/search with blank destination -> 400' -Method Get -Path '/api/packages/search?destination=%20' -Expect 400
 
 Test-Api -Name 'POST /api/admin/packages without token -> 401' -Method Post -Path '/api/admin/packages' `
     -Body @{ title = 'Sneaky'; destination = 'Nowhere'; durationDays = 1; price = 10 } -Expect 401
 
-$newPkg = Test-Api -Name 'POST /api/admin/packages (admin) -> 201' -Method Post -Path '/api/admin/packages' `
-    -Token $adminToken -Expect 201 `
-    -Body @{ title = "Test Package $($RunId)"; description = 'created by api-tests'; destination = 'Testland'; `
-             durationDays = 3; price = 199.99; maxCapacity = 10; itinerary = 'Day 1: test'; status = 'ACTIVE' } `
-    -Check { param($r) $r.Json.status -eq 'ACTIVE' } -CheckDesc 'created as ACTIVE' -Capture
-$pkgId = $newPkg.Json.packageId
-
 Test-Api -Name 'POST /api/admin/packages invalid payload -> 400' -Method Post -Path '/api/admin/packages' `
     -Token $adminToken -Expect 400 -Body @{ title = ''; destination = ''; durationDays = 0; price = -5 }
 
 $updPkg = Test-Api -Name 'PUT /api/admin/packages/{id} (admin)' -Method Put -Path "/api/admin/packages/$pkgId" `
     -Token $adminToken -Expect 200 `
-    -Body @{ title = "Updated Package $($RunId)"; description = 'updated'; destination = 'Testland'; `
+    -Body @{ title = "Updated Package $($RunId)"; description = 'updated'; destination = "Bali $($RunId)"; `
              durationDays = 4; price = 249.50; maxCapacity = 12; itinerary = 'Day 1: updated'; status = 'ACTIVE' } `
     -Check { param($r) $r.Json.title -like 'Updated Package*' -and $r.Json.durationDays -eq 4 } -CheckDesc 'fields persisted' -Capture
 
@@ -301,7 +303,7 @@ Test-Api -Name 'PUT /api/admin/packages/{unknown} -> 404' -Method Put -Path '/ap
     -Token $adminToken -Expect 404 -Body @{ title = 'X'; destination = 'Y'; durationDays = 1; price = 1 }
 
 Test-Api -Name 'GET /api/admin/packages (admin sees all)' -Method Get -Path '/api/admin/packages' `
-    -Token $adminToken -Expect 200 -Check { param($r) $r.Json.Count -ge 2 } -CheckDesc 'includes inactive packages'
+    -Token $adminToken -Expect 200 -Check { param($r) $r.Json.packageId -contains $pkgId } -CheckDesc 'includes the package'
 
 # a small package to test capacity, and one to deactivate
 $smallPkg = Test-Api -Name 'POST /api/admin/packages (capacity 1)' -Method Post -Path '/api/admin/packages' `
@@ -317,6 +319,11 @@ $deadPkgId = $deadPkg.Json.packageId
 Test-Api -Name 'PATCH /api/admin/packages/{id}/deactivate (admin)' -Method Patch `
     -Path "/api/admin/packages/$deadPkgId/deactivate" -Token $adminToken -Expect 200 `
     -Check { param($r) $r.Json.status -eq 'INACTIVE' } -CheckDesc 'status INACTIVE'
+
+Test-Api -Name 'GET /api/admin/packages lists inactive packages too' -Method Get -Path '/api/admin/packages' `
+    -Token $adminToken -Expect 200 `
+    -Check { param($r) ($r.Json.packageId -contains $deadPkgId) -and ($r.Json.packageId -contains $pkgId) } `
+    -CheckDesc 'active and inactive both visible to admin'
 
 Test-Api -Name 'deactivated package is hidden from public list' -Method Get -Path '/api/packages' -Expect 200 `
     -Check { param($r) -not ($r.Json.packageId -contains $deadPkgId) } -CheckDesc 'inactive package not listed'
