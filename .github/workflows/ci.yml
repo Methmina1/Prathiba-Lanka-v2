@@ -1,0 +1,157 @@
+name: Spring Boot CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, updates]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run per branch/PR at a time; a new push cancels the previous run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Compile & test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: travel_agency_test
+        ports:
+          - 5432:5432
+        # GitHub waits for this health check before running the steps below, which is why no
+        # separate "wait for postgres" step is needed.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DB_URL: jdbc:postgresql://localhost:5432/travel_agency_test
+      DB_USERNAME: testuser
+      DB_PASSWORD: testpassword
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          # Matches <java.version>21</java.version> in pom.xml, so CI tests the runtime the jar targets.
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Build and run tests with Maven
+        run: mvn -B -ntp clean verify
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Upload application jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-jar
+          path: target/PrathibaLanka-*.jar
+          if-no-files-found: error
+
+  api-tests:
+    name: API endpoint tests
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: travel_agency_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DB_URL: jdbc:postgresql://localhost:5432/travel_agency_test
+      DB_USERNAME: testuser
+      DB_PASSWORD: testpassword
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Download application jar
+        uses: actions/download-artifact@v4
+        with:
+          name: app-jar
+          path: app
+
+      # The backend sends mail; point it at a local sink so the mail paths are exercised
+      # without an external SMTP provider.
+      - name: Start fake SMTP server
+        run: |
+          nohup pwsh -NoProfile -File scripts/fake-smtp.ps1 -Port 2525 > smtp.log 2>&1 &
+          sleep 3
+
+      - name: Start application
+        run: |
+          nohup java -jar app/PrathibaLanka-*.jar \
+            --server.port=8080 \
+            --spring.mail.host=127.0.0.1 \
+            --spring.mail.port=2525 \
+            --spring.mail.properties.mail.smtp.auth=false \
+            > app.log 2>&1 &
+
+      - name: Wait for the application to be ready
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8080/api/packages > /dev/null; then
+              echo "Application is up (after ${i} checks)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Application did not become ready in time"
+          tail -n 60 app.log
+          exit 1
+
+      - name: Run endpoint tests
+        run: pwsh -NoProfile -File scripts/api-tests.ps1 -BaseUrl http://localhost:8080
+
+      - name: Application log
+        if: always()
+        run: tail -n 100 app.log || true
+
+      - name: SMTP log
+        if: always()
+        run: tail -n 50 smtp.log || true
