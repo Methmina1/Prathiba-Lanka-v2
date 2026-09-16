@@ -1,5 +1,6 @@
 package com.example.PrathibaLanka.entity;
 
+import com.example.PrathibaLanka.enums.MediaType;
 import jakarta.persistence.*;
 import lombok.Data;
 import org.hibernate.annotations.CreationTimestamp;
@@ -19,6 +20,11 @@ public class GalleryImage {
     @Column(length = 255)
     private String caption;
 
+    /** IMAGE or VIDEO. Nullable so rows created before videos existed stay valid, and read as IMAGE. */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private MediaType mediaType;
+
     @ManyToOne
     @JoinColumn(name = "package_id")
     private TravelPackage travelPackage;
@@ -29,4 +35,11 @@ public class GalleryImage {
 
     @CreationTimestamp
     private LocalDateTime uploadedAt;
+
+    @PrePersist
+    void defaultMediaType() {
+        if (mediaType == null) {
+            mediaType = MediaType.IMAGE;
+        }
+    }
 }

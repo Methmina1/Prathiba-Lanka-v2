@@ -11,6 +11,7 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.util.regex.Pattern;
@@ -46,6 +47,7 @@ public class AdminBootstrapConfig {
     private String adminFullName;
 
     @Bean
+    @Order(1)   // the content seeding that follows attributes its rows to this account
     @ConditionalOnProperty(name = "app.bootstrap-admin.enabled", havingValue = "true", matchIfMissing = true)
     public ApplicationRunner bootstrapAdminRunner() {
         return args -> {

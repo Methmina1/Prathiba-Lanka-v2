@@ -1,5 +1,6 @@
 package com.example.PrathibaLanka.dto.request;
 
+import com.example.PrathibaLanka.enums.MediaType;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
@@ -11,4 +12,7 @@ public class GalleryUploadRequestDTO {
     private String caption;
 
     private Long packageId;
+
+    /** IMAGE or VIDEO; anything missing or unknown is treated as an image. */
+    private MediaType mediaType;
 }

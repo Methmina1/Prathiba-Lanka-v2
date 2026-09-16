@@ -31,3 +31,7 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Uploaded media (images and short videos) ###
+### Files live on disk under app.media.dir; only the rows in media_asset are versioned. ###
+uploads/

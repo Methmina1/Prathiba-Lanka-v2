@@ -147,6 +147,77 @@ function Invoke-Concurrent {
     return @($results)
 }
 
+# Uploads a file as multipart/form-data. The response shape matches Invoke-Api.
+function Invoke-ApiUpload {
+    param(
+        [string]$Path,
+        [string]$FilePath,
+        [string]$ContentType,
+        [string]$Token,
+        [string]$Title
+    )
+    $methodObj = New-Object System.Net.Http.HttpMethod('Post')
+    $req = New-Object System.Net.Http.HttpRequestMessage($methodObj, "$BaseUrl$Path")
+
+    $content = New-Object System.Net.Http.MultipartFormDataContent
+    $bytes = [System.IO.File]::ReadAllBytes($FilePath)
+    $fileContent = [System.Net.Http.ByteArrayContent]::new($bytes)
+    $fileContent.Headers.ContentType = New-Object System.Net.Http.Headers.MediaTypeHeaderValue($ContentType)
+    $content.Add($fileContent, 'file', [System.IO.Path]::GetFileName($FilePath))
+    if ($Title) {
+        $titleContent = New-Object System.Net.Http.StringContent($Title)
+        $content.Add($titleContent, 'title')
+    }
+    $req.Content = $content
+
+    if ($Token) {
+        $req.Headers.Authorization = New-Object System.Net.Http.Headers.AuthenticationHeaderValue('Bearer', $Token)
+    }
+    $resp = $script:Http.SendAsync($req).Result
+    $text = $resp.Content.ReadAsStringAsync().Result
+    $parsed = $null
+    if ($text) { try { $parsed = $text | ConvertFrom-Json } catch { $parsed = $null } }
+    [pscustomobject]@{ Status = [int]$resp.StatusCode; Body = $text; Json = $parsed }
+}
+
+function Test-Upload {
+    param(
+        [string]$Name,
+        [string]$FilePath,
+        [string]$ContentType,
+        [string]$Token,
+        [int[]]$Expect = @(201),
+        [scriptblock]$Check,
+        [string]$CheckDesc = '',
+        [switch]$Capture
+    )
+    $r = Invoke-ApiUpload -Path '/api/admin/media' -FilePath $FilePath -ContentType $ContentType -Token $Token
+    $ok     = $Expect -contains $r.Status
+    $detail = "expected $($Expect -join '/'), got $($r.Status)"
+
+    if ($ok -and $Check) {
+        $checkOk = $false
+        try { $checkOk = [bool](& $Check $r) } catch { $detail = "body check threw: $($_.Exception.Message)" }
+        if ($checkOk) { $detail = "OK - $CheckDesc" }
+        elseif ($detail -notlike 'body check threw*') { $ok = $false; $detail = "body check failed - $CheckDesc" }
+        else { $ok = $false }
+    }
+
+    if ($ok) {
+        $script:Pass++
+        Write-Host ("  [PASS] {0,-56} HTTP {1}" -f $Name, $r.Status) -ForegroundColor Green
+    } else {
+        $script:Fail++
+        [void]$script:Failures.Add("$Name -> $detail")
+        Write-Host ("  [FAIL] {0,-56} {1}" -f $Name, $detail) -ForegroundColor Red
+        if ($r.Body) {
+            $snippet = $r.Body -replace '\s+', ' '
+            Write-Host ("         body: " + $snippet.Substring(0, [Math]::Min(280, $snippet.Length))) -ForegroundColor DarkYellow
+        }
+    }
+    if ($Capture) { return $r }
+}
+
 function Wait-Until {
     param([scriptblock]$Condition, [int]$TimeoutSeconds = 15, [int]$IntervalMs = 500)
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
@@ -584,9 +655,11 @@ Test-Condition -Name 'capacity lock: 5 parallel bookings produce no 5xx' -CheckD
 Test-Condition -Name 'capacity lock: exactly the free seats are accepted' -CheckDesc "$accepted accepted, $refused refused" `
     -Check { $accepted -eq 3 -and $refused -eq 2 }
 
+# Scoped to THIS run's package: every run creates its own "Race Package <RunId>", and bookings have
+# no delete endpoint, so matching on the destination alone would count earlier runs' bookings too.
 Test-Api -Name 'capacity lock: outstanding travelers never exceed capacity' -Method Get -Path '/api/admin/bookings' `
     -Token $adminToken -Expect 200 `
-    -Check { param($r) (($r.Json | Where-Object { $_.destination -eq 'Raceland' -and $_.status -ne 'REJECTED' } | Measure-Object -Property numTravelers -Sum).Sum) -le 3 } `
+    -Check { param($r) (($r.Json | Where-Object { $_.packageTitle -eq "Race Package $($RunId)" -and $_.status -ne 'REJECTED' } | Measure-Object -Property numTravelers -Sum).Sum) -le 3 } `
     -CheckDesc 'sum of outstanding travelers <= maxCapacity'
 
 # Optimistic locking: two admins confirming the same booking at the same moment.
@@ -606,9 +679,152 @@ Test-Api -Name 'booking is CONFIRMED exactly once after the race' -Method Get -P
     -Check { param($r) @($r.Json | Where-Object { $_.bookingId -eq $raceBooking.Json.bookingId }).Count -eq 1 } `
     -CheckDesc 'no duplicate confirmation'
 
-# ---------------------------------------------------------------- 10. cleanup
+# ---------------------------------------------------------------- 10. media library
 
-Section '10. Cleanup (data created by this run)'
+Section '10. Media library (image and video uploads)'
+
+# Fixtures are written rather than committed: a 1x1 PNG and a WebM header are enough to prove the
+# upload path, the signature check and the byte round trip.
+$fixtureDir = Join-Path ([System.IO.Path]::GetTempPath()) "prathibalanka-media-$RunId"
+New-Item -ItemType Directory -Path $fixtureDir -Force | Out-Null
+$pngPath = Join-Path $fixtureDir 'pixel.png'
+$webmPath = Join-Path $fixtureDir 'clip.webm'
+$textPath = Join-Path $fixtureDir 'notes.png'
+$bigPath = Join-Path $fixtureDir 'huge.png'
+
+[System.IO.File]::WriteAllBytes($pngPath, [Convert]::FromBase64String(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='))
+[System.IO.File]::WriteAllBytes($webmPath, ([byte[]](0x1A, 0x45, 0xDF, 0xA3) + (New-Object byte[] 64)))
+Set-Content -Path $textPath -Value 'this is not a png' -NoNewline -Encoding ascii
+# 11 MB with a valid PNG header, to exercise the per-type limit rather than the multipart ceiling.
+$big = New-Object byte[] (11 * 1024 * 1024)
+[Array]::Copy([byte[]](0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A), $big, 8)
+[System.IO.File]::WriteAllBytes($bigPath, $big)
+
+Test-Upload -Name 'POST /api/admin/media without token -> 401' -FilePath $pngPath -ContentType 'image/png' -Expect 401
+Test-Upload -Name 'POST /api/admin/media with customer token -> 403' -FilePath $pngPath -ContentType 'image/png' `
+    -Token $custAToken -Expect 403
+
+$imageUpload = Test-Upload -Name 'POST /api/admin/media (png) -> 201' -FilePath $pngPath -ContentType 'image/png' `
+    -Token $adminToken -Title 'Test pixel' -Expect 201 `
+    -Check { param($r) $r.Json.mediaType -eq 'IMAGE' -and $r.Json.url -like '/media/*' -and $r.Json.sizeBytes -gt 0 } `
+    -CheckDesc 'IMAGE with a /media url' -Capture
+
+$imageUrl = $imageUpload.Json.url
+$imageName = [System.IO.Path]::GetFileName($imageUrl)
+
+$served = Invoke-Api -Method Get -Path $imageUrl
+$servedBytes = $null
+if ($served.Status -eq 200) {
+    # The helper decodes JSON; fetch the raw bytes separately for the round-trip comparison.
+    $servedBytes = $script:Http.GetByteArrayAsync("$BaseUrl$imageUrl").Result
+}
+Test-Condition -Name 'GET /media/{name} serves the file byte for byte' -CheckDesc 'same length and content' `
+    -Check {
+        $served.Status -eq 200 -and
+        $null -ne $servedBytes -and
+        $servedBytes.Length -eq (Get-Item $pngPath).Length -and
+        [Convert]::ToBase64String($servedBytes) -eq [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($pngPath))
+    }
+
+Test-Upload -Name 'mislabeled file (text as image/png) -> 400' -FilePath $textPath -ContentType 'image/png' `
+    -Token $adminToken -Expect 400 `
+    -Check { param($r) $r.Json.message -like '*does not look like*' } -CheckDesc 'signature check rejects it'
+Test-Upload -Name 'unsupported type (application/pdf) -> 400' -FilePath $textPath -ContentType 'application/pdf' `
+    -Token $adminToken -Expect 400 `
+    -Check { param($r) $r.Json.message -like '*Unsupported file type*' } -CheckDesc 'type whitelist'
+Test-Upload -Name 'image over the per-type limit -> 413' -FilePath $bigPath -ContentType 'image/png' `
+    -Token $adminToken -Expect 413
+
+$videoUpload = Test-Upload -Name 'POST /api/admin/media (webm) -> 201' -FilePath $webmPath -ContentType 'video/webm' `
+    -Token $adminToken -Title 'Test clip' -Expect 201 `
+    -Check { param($r) $r.Json.mediaType -eq 'VIDEO' } -CheckDesc 'classified as VIDEO' -Capture
+
+Test-Api -Name 'GET /api/admin/media (admin) lists both uploads' -Method Get -Path '/api/admin/media' `
+    -Token $adminToken -Expect 200 `
+    -Check { param($r) @($r.Json | Where-Object { $_.mediaId -eq $imageUpload.Json.mediaId }).Count -eq 1 } `
+    -CheckDesc 'the image is listed'
+Test-Api -Name 'GET /api/admin/media?type=VIDEO filters' -Method Get -Path '/api/admin/media?type=VIDEO' `
+    -Token $adminToken -Expect 200 `
+    -Check { param($r) @($r.Json | Where-Object { $_.mediaType -ne 'VIDEO' }).Count -eq 0 } -CheckDesc 'videos only'
+Test-Api -Name 'GET /api/admin/media/limits (admin)' -Method Get -Path '/api/admin/media/limits' `
+    -Token $adminToken -Expect 200 `
+    -Check { param($r) $r.Json.maxVideoBytes -gt $r.Json.maxImageBytes } -CheckDesc 'video limit is the larger one'
+Test-Api -Name 'GET /api/admin/media without token -> 401' -Method Get -Path '/api/admin/media' -Expect 401
+Test-Api -Name 'GET /api/admin/media?type=BOGUS -> 400' -Method Get -Path '/api/admin/media?type=BOGUS' `
+    -Token $adminToken -Expect 400
+
+# The gallery can hold videos as well as images.
+$mediaGalleryItem = Test-Api -Name 'POST /api/admin/gallery with mediaType VIDEO -> 201' -Method Post `
+    -Path '/api/admin/gallery' -Token $adminToken -Expect 201 `
+    -Body @{ imageUrl = $videoUpload.Json.url; caption = "Uploaded clip $RunId"; mediaType = 'VIDEO' } `
+    -Check { param($r) $r.Json.mediaType -eq 'VIDEO' } -CheckDesc 'video stored in the gallery' -Capture
+Test-Api -Name 'GET /api/gallery exposes the media type' -Method Get -Path '/api/gallery' -Expect 200 `
+    -Check { param($r) @($r.Json | Where-Object { $_.imageId -eq $mediaGalleryItem.Json.imageId -and $_.mediaType -eq 'VIDEO' }).Count -eq 1 } `
+    -CheckDesc 'public list marks the clip as VIDEO'
+Test-Api -Name 'DELETE a media file still used by the gallery -> 409' -Method Delete `
+    -Path "/api/admin/media/$($videoUpload.Json.mediaId)" -Token $adminToken -Expect 409 `
+    -Check { param($r) $r.Json.error -eq 'Conflict' } -CheckDesc 'reference kept intact'
+
+Test-Api -Name 'DELETE /api/admin/gallery/{id} (video) -> 204' -Method Delete `
+    -Path "/api/admin/gallery/$($mediaGalleryItem.Json.imageId)" -Token $adminToken -Expect 204
+Test-Api -Name 'DELETE /api/admin/media/{id} -> 204' -Method Delete `
+    -Path "/api/admin/media/$($videoUpload.Json.mediaId)" -Token $adminToken -Expect 204
+Test-Api -Name 'deleted media is no longer served -> 404' -Method Get -Path $videoUpload.Json.url -Expect 404
+Test-Api -Name 'DELETE /api/admin/media/{unknown} -> 404' -Method Delete -Path '/api/admin/media/999999' `
+    -Token $adminToken -Expect 404
+Test-Api -Name 'DELETE /api/admin/media/{id} without token -> 401' -Method Delete `
+    -Path "/api/admin/media/$($imageUpload.Json.mediaId)" -Expect 401
+Test-Api -Name 'DELETE the uploaded image -> 204' -Method Delete `
+    -Path "/api/admin/media/$($imageUpload.Json.mediaId)" -Token $adminToken -Expect 204
+
+Remove-Item -Recurse -Force $fixtureDir -ErrorAction SilentlyContinue
+
+# ---------------------------------------------------------------- 11. editable page content
+
+Section '11. Editable About / Contact page content'
+
+$aboutContent = Test-Api -Name 'GET /api/content/about (public)' -Method Get -Path '/api/content/about' -Expect 200 `
+    -Check { param($r) $r.Json.section -eq 'ABOUT' -and $r.Json.payload.hero.title } -CheckDesc 'hero title present' -Capture
+Test-Api -Name 'GET /api/content/contact (public)' -Method Get -Path '/api/content/contact' -Expect 200 `
+    -Check { param($r) $r.Json.payload.cards.Count -ge 1 } -CheckDesc 'contact cards present'
+Test-Api -Name 'GET /api/content/{unknown} -> 400' -Method Get -Path '/api/content/nope' -Expect 400
+Test-Api -Name 'GET /api/admin/content without token -> 401' -Method Get -Path '/api/admin/content' -Expect 401
+Test-Api -Name 'GET /api/admin/content (admin)' -Method Get -Path '/api/admin/content' -Token $adminToken -Expect 200 `
+    -Check { param($r) @($r.Json | Where-Object { $_.section -eq 'ABOUT' }).Count -eq 1 -and @($r.Json | Where-Object { $_.section -eq 'CONTACT' }).Count -eq 1 } `
+    -CheckDesc 'both sections listed'
+Test-Api -Name 'PUT /api/admin/content/about without token -> 401' -Method Put -Path '/api/admin/content/about' `
+    -Body @{ payload = @{ hero = @{ title = 'x' } } } -Expect 401
+Test-Api -Name 'PUT /api/admin/content/about (customer token) -> 403' -Method Put -Path '/api/admin/content/about' `
+    -Token $custAToken -Body @{ payload = @{ hero = @{ title = 'x' } } } -Expect 403
+Test-Api -Name 'PUT incomplete payload -> 400' -Method Put -Path '/api/admin/content/about' -Token $adminToken `
+    -Expect 400 -Body @{ payload = @{ hero = @{ title = 'Only the hero' } } } `
+    -Check { param($r) $r.Json.message -like '*story is required*' } -CheckDesc 'names the missing block'
+Test-Api -Name 'PUT non-object payload -> 400' -Method Put -Path '/api/admin/content/contact' -Token $adminToken `
+    -Expect 400 -Body @{ payload = @('not', 'an', 'object') }
+
+# Round trip: change the hero title, read it back from the public endpoint, then restore the original.
+# Each ConvertFrom-Json produces a fresh object graph: PowerShell assigns references, so reusing one
+# object for "original" and "edited" would mutate both and make the restore check meaningless.
+$originalTitle = [string]$aboutContent.Json.payload.hero.title
+$originalPayload = ($aboutContent.Body | ConvertFrom-Json).payload
+$edited = ($aboutContent.Body | ConvertFrom-Json).payload
+$edited.hero.title = "Edited by the test run $RunId"
+Test-Api -Name 'PUT /api/admin/content/about (admin) -> 200' -Method Put -Path '/api/admin/content/about' `
+    -Token $adminToken -Expect 200 -Body (@{ payload = $edited } | ConvertTo-Json -Depth 12) `
+    -Check { param($r) $r.Json.payload.hero.title -eq "Edited by the test run $RunId" -and $r.Json.updatedByName } `
+    -CheckDesc 'saved and attributed'
+Test-Api -Name 'the edit is visible on the public endpoint' -Method Get -Path '/api/content/about' -Expect 200 `
+    -Check { param($r) $r.Json.payload.hero.title -eq "Edited by the test run $RunId" } -CheckDesc 'public copy updated'
+Test-Api -Name 'PUT restores the original content' -Method Put -Path '/api/admin/content/about' `
+    -Token $adminToken -Expect 200 -Body (@{ payload = $originalPayload } | ConvertTo-Json -Depth 12) `
+    -Check { param($r) $r.Json.payload.hero.title -eq $originalTitle } -CheckDesc "back to '$originalTitle'"
+Test-Api -Name 'the restore is visible on the public endpoint' -Method Get -Path '/api/content/about' -Expect 200 `
+    -Check { param($r) $r.Json.payload.hero.title -eq $originalTitle } -CheckDesc 'public copy restored'
+
+# ---------------------------------------------------------------- 12. cleanup
+
+Section '12. Cleanup (data created by this run)'
 
 Test-Api -Name 'DELETE package with bookings -> 409 conflict' -Method Delete -Path "/api/admin/packages/$pkgId" `
     -Token $adminToken -Expect 409 -Check { param($r) $r.Json.error -eq 'Conflict' } -CheckDesc 'FK conflict reported as 409 (was 500)'

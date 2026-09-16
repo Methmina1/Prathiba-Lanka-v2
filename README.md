@@ -1,13 +1,15 @@
 # PrathibaLanka
 
 REST backend for a Sri Lanka travel agency: travel packages, booking requests with PIN tracking,
-customer reviews, gallery, journal posts and contact queries.
+customer reviews, gallery, journal posts, contact queries, uploaded media and the editable copy of
+the public About/Contact pages.
 
 ## Stack
 
 - Java 21, Spring Boot 4.1.1 (Web MVC, Data JPA, Security, Validation, Mail)
 - PostgreSQL 15 (Docker), Hibernate `ddl-auto=update`
 - JWT (JJWT 0.12.6) bearer tokens, BCrypt password hashes
+- Jackson 3 (`tools.jackson`) — Spring Boot 4 no longer uses Jackson 2 for HTTP bodies
 
 ## Run
 
@@ -32,6 +34,12 @@ Defaults match `docker-compose.yml`. Everything can be overridden with environme
 | `BOOTSTRAP_ADMIN_ENABLED` | `true` | Create/repair the first admin on startup |
 | `BOOTSTRAP_ADMIN_EMAIL` | `admin@test.com` | Bootstrap admin login |
 | `BOOTSTRAP_ADMIN_PASSWORD` | `Admin@12345` | Bootstrap admin password |
+| `BOOTSTRAP_CONTENT_ENABLED` | `true` | Seed the About/Contact pages when their rows are missing |
+| `MEDIA_DIR` | `uploads` | Directory the uploaded files are written to |
+| `MEDIA_URL_PREFIX` | `/media` | Public path the files are served from |
+| `MEDIA_MAX_IMAGE_BYTES` | `10485760` (10 MB) | Image upload limit |
+| `MEDIA_MAX_VIDEO_BYTES` | `62914560` (60 MB) | Video upload limit |
+| `MEDIA_MAX_UPLOAD` / `MEDIA_MAX_REQUEST` | `64MB` / `70MB` | Multipart ceiling (hard limit above the per-type ones) |
 
 The bootstrap admin is created only if that email does not exist, and its password is reset only
 when the stored hash is not a valid BCrypt hash. A valid password is never overwritten. Disable it
@@ -63,6 +71,8 @@ Public
 | GET | `/api/gallery`, `/api/gallery/{id}`, `/api/gallery/package/{packageId}` |
 | GET | `/api/journal/published`, `/api/journal/published/{id}` |
 | GET | `/api/bookings/track?pin=` |
+| GET | `/api/content/{section}` (`about`, `contact`) |
+| GET | `/media/{file}` |
 | POST | `/api/contact` |
 
 Customer (bearer token, `ROLE_CUSTOMER`)
@@ -78,12 +88,45 @@ Admin (bearer token, `ROLE_ADMIN`)
 | Method | Path |
 |---|---|
 | GET | `/api/admin/packages`, `/api/admin/bookings?status=`, `/api/admin/queries?onlyNew=`, `/api/admin/journal`, `/api/admin/journal/{id}` |
-| POST | `/api/admin/packages`, `/api/admin/gallery`, `/api/admin/journal` |
-| PUT | `/api/admin/packages/{id}`, `/api/admin/gallery/{id}`, `/api/admin/journal/{id}` |
+| GET | `/api/admin/media?type=`, `/api/admin/media/limits`, `/api/admin/content` |
+| POST | `/api/admin/packages`, `/api/admin/gallery`, `/api/admin/journal`, `/api/admin/media` (multipart) |
+| PUT | `/api/admin/packages/{id}`, `/api/admin/gallery/{id}`, `/api/admin/journal/{id}`, `/api/admin/content/{section}` |
 | PATCH | `/api/admin/packages/{id}/deactivate`, `/api/admin/bookings/{id}/confirm`, `/api/admin/bookings/{id}/reject`, `/api/admin/queries/{id}/respond`, `/api/admin/journal/{id}/publish`, `/api/admin/journal/{id}/unpublish` |
-| DELETE | `/api/admin/packages/{id}`, `/api/admin/gallery/{id}`, `/api/admin/journal/{id}`, `/api/admin/reviews/{id}` |
+| DELETE | `/api/admin/packages/{id}`, `/api/admin/gallery/{id}`, `/api/admin/journal/{id}`, `/api/admin/reviews/{id}`, `/api/admin/media/{id}` |
 
 Booking status flow: `PENDING` → `CONFIRMED` or `REJECTED`; only pending bookings can be rejected.
+
+## Media (images and short videos)
+
+`POST /api/admin/media` takes `multipart/form-data` with a `file` part and an optional `title`. The
+stored file is written to `app.media.dir` under a generated `<uuid>.<ext>` name and served publicly
+from `/media/<name>` with a 30-day cache header (the name never changes, so it is safe to cache).
+
+- Accepted types: `image/jpeg`, `image/png`, `image/webp`, `image/gif`, `image/avif`,
+  `video/mp4`, `video/webm`, `video/quicktime`. Anything else is a `400`.
+- The extension is chosen by the server from that table, never from the client's filename, and the
+  first bytes of the file must match the declared format — so a renamed file is refused rather than
+  served as an image.
+- Images are capped at 10 MB and videos at 60 MB (configurable); exceeding it is a `413`.
+- Deleting a file that a gallery item or journal cover still points at is refused with `409`, so a
+  page cannot be left pointing at a missing file. Delete the row that uses it first.
+- Nothing transcodes or resizes: the bytes are stored as uploaded. Keep clips short.
+
+`GalleryImage.mediaType` is `IMAGE` or `VIDEO` (rows written before videos existed read as `IMAGE`),
+so the public gallery can render a clip with controls.
+
+## Editable page content
+
+The About and Contact pages are stored in `page_content` as one JSON document per section, so the
+copy changes without a deployment.
+
+- `GET /api/content/{section}` — public; `404` when the section has no row.
+- `PUT /api/admin/content/{section}` — replaces the payload. The section is validated first:
+  required blocks (`hero`, `story`, `values`, `timeline` for About; `hero`, `aside` and `cards` for
+  Contact), required lists with their maximum lengths, text-only leaves and per-field length budgets.
+  A rejected save returns `400` listing every problem, and the stored copy is left untouched.
+- On startup `ContentBootstrapConfig` seeds any missing section from `src/main/resources/content/`.
+  An edited page is never overwritten by a restart.
 
 ## Errors
 
@@ -95,7 +138,8 @@ Booking status flow: `PENDING` → `CONFIRMED` or `REJECTED`; only pending booki
 
 `400` validation/malformed input · `401` missing or invalid token, bad credentials ·
 `403` wrong role or acting on another account · `404` unknown id/route ·
-`405` wrong method · `409` duplicate or referenced record · `500` unexpected (details stay in the log).
+`405` wrong method · `409` duplicate or referenced record · `413` upload too large ·
+`500` unexpected (details stay in the log).
 
 ## Tests
 
@@ -110,7 +154,10 @@ powershell -ExecutionPolicy Bypass -File scripts/fake-smtp.ps1 -Port 2525
 ```
 
 `scripts/api-tests.ps1` covers every endpoint plus validation, authorization and ownership cases,
-and cleans up the data it creates. `mvn test` runs the context-load test.
+and cleans up the data it creates. Upload fixtures (a 1×1 PNG, a WebM header, a mislabeled file and
+an 11 MB image) are written to the temp directory at run time, so the suite proves the upload path,
+the signature check, the per-type size limit and the byte round trip without committing binaries.
+`mvn test` runs the context-load test.
 
 ## Concurrency
 
@@ -155,5 +202,10 @@ bootstrap admin come from the workflow `env:` block (see `DB_URL`, `DB_USERNAME`
 - List endpoints return everything (`findAll`) — add pagination as data grows.
 - `spring.jpa.show-sql=true` is left on for development.
 - Tokens are stateless with no revocation or refresh.
+- Uploads go to the local disk, which does not survive a container rebuild and is not shared between
+  instances — move `app.media.dir` to an object store (S3 and the like) before scaling out.
+- Uploaded bytes are served back as stored: no transcoding, resizing or thumbnail generation, and
+  clips are not length-checked, only size-checked.
+- The media library is admin-only with no per-file ownership or audit trail beyond `uploaded_by`.
 - Scheduled work (reminders, stale pending bookings) is not implemented yet; when it is added,
   running more than one instance needs a lock (ShedLock) so jobs do not run twice.
