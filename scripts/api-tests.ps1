@@ -23,14 +23,25 @@
     powershell -ExecutionPolicy Bypass -File scripts/api-tests.ps1 -BaseUrl http://localhost:18080
 
 .NOTES
+    The admin password is not stored here: it comes from BOOTSTRAP_ADMIN_PASSWORD (the same variable
+    the app creates the account from), or from PRATHIBALANKA_ADMIN_PASSWORD, or from -AdminPassword.
+
     Exit code 0 = every check passed, 1 = at least one check failed.
 #>
 [CmdletBinding()]
 param(
     [string]$BaseUrl       = 'http://localhost:18080',
-    [string]$AdminEmail    = 'admin@test.com',
-    [string]$AdminPassword = 'Admin@12345'
+    [string]$AdminEmail    = $(if ($env:BOOTSTRAP_ADMIN_EMAIL) { $env:BOOTSTRAP_ADMIN_EMAIL } else { 'prathibhalankavoyages@gmail.com' }),
+    [string]$AdminPassword = $(if ($env:PRATHIBALANKA_ADMIN_PASSWORD) { $env:PRATHIBALANKA_ADMIN_PASSWORD } elseif ($env:BOOTSTRAP_ADMIN_PASSWORD) { $env:BOOTSTRAP_ADMIN_PASSWORD } else { '' })
 )
+
+if ([string]::IsNullOrWhiteSpace($AdminPassword)) {
+    Write-Host 'No admin password.' -ForegroundColor Red
+    Write-Host 'These tests sign in as an admin, and no password is stored in the repository.'
+    Write-Host 'Set BOOTSTRAP_ADMIN_PASSWORD (the app uses the same variable to create the account),'
+    Write-Host 'or pass -AdminPassword, and run again.'
+    exit 1
+}
 
 $ErrorActionPreference = 'Stop'
 # Windows PowerShell 5.1 needs this assembly loaded explicitly; PowerShell 7 already ships it.

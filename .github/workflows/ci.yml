@@ -42,6 +42,10 @@ jobs:
       DB_URL: jdbc:postgresql://localhost:5432/travel_agency_test
       DB_USERNAME: testuser
       DB_PASSWORD: testpassword
+      # The admin password has no default in application.properties, so CI supplies a throwaway one
+      # for the context-load test. api-tests signs in with the same variable.
+      BOOTSTRAP_ADMIN_EMAIL: prathibhalankavoyages@gmail.com
+      BOOTSTRAP_ADMIN_PASSWORD: ci-only-throwaway-password
 
     steps:
       - name: Checkout code
@@ -99,6 +103,9 @@ jobs:
       DB_URL: jdbc:postgresql://localhost:5432/travel_agency_test
       DB_USERNAME: testuser
       DB_PASSWORD: testpassword
+      # The app creates its admin from these, and api-tests signs in with the same variables.
+      BOOTSTRAP_ADMIN_EMAIL: prathibhalankavoyages@gmail.com
+      BOOTSTRAP_ADMIN_PASSWORD: ci-only-throwaway-password
 
     steps:
       - name: Checkout code
