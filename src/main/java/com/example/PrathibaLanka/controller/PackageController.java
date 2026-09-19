@@ -82,6 +82,7 @@ public class PackageController {
         dto.setPrice(pkg.getPrice());
         dto.setMaxCapacity(pkg.getMaxCapacity());
         dto.setItinerary(pkg.getItinerary());
+        dto.setImageUrl(pkg.getImageUrl());
         dto.setStatus(pkg.getStatus());
         dto.setCreatedAt(pkg.getCreatedAt());
         dto.setUpdatedAt(pkg.getUpdatedAt());

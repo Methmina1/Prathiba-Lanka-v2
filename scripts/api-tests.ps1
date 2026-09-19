@@ -367,8 +367,22 @@ Test-Api -Name 'POST /api/admin/packages invalid payload -> 400' -Method Post -P
 $updPkg = Test-Api -Name 'PUT /api/admin/packages/{id} (admin)' -Method Put -Path "/api/admin/packages/$pkgId" `
     -Token $adminToken -Expect 200 `
     -Body @{ title = "Updated Package $($RunId)"; description = 'updated'; destination = "Bali $($RunId)"; `
-             durationDays = 4; price = 249.50; maxCapacity = 12; itinerary = 'Day 1: updated'; status = 'ACTIVE' } `
-    -Check { param($r) $r.Json.title -like 'Updated Package*' -and $r.Json.durationDays -eq 4 } -CheckDesc 'fields persisted' -Capture
+             durationDays = 4; price = 249.50; maxCapacity = 12; itinerary = 'Day 1: updated'; status = 'ACTIVE'; `
+             imageUrl = '/media/test-cover.jpg' } `
+    -Check { param($r) $r.Json.title -like 'Updated Package*' -and $r.Json.durationDays -eq 4 -and $r.Json.imageUrl -eq '/media/test-cover.jpg' } `
+    -CheckDesc 'fields persisted, cover image kept' -Capture
+
+# The card cover is an admin-managed field: set it, change it, and clear it again.
+Test-Api -Name 'package cover image can be replaced' -Method Put -Path "/api/admin/packages/$pkgId" `
+    -Token $adminToken -Expect 200 `
+    -Body @{ title = "Updated Package $($RunId)"; destination = "Bali $($RunId)"; durationDays = 4; price = 249.50; `
+             maxCapacity = 12; imageUrl = 'https://example.com/other.jpg' } `
+    -Check { param($r) $r.Json.imageUrl -eq 'https://example.com/other.jpg' } -CheckDesc 'hosted URL accepted'
+Test-Api -Name 'blank cover image clears it' -Method Put -Path "/api/admin/packages/$pkgId" `
+    -Token $adminToken -Expect 200 `
+    -Body @{ title = "Updated Package $($RunId)"; destination = "Bali $($RunId)"; durationDays = 4; price = 249.50; `
+             maxCapacity = 12; imageUrl = '' } `
+    -Check { param($r) $null -eq $r.Json.imageUrl } -CheckDesc 'back to the drawn scene'
 
 Test-Api -Name 'PUT /api/admin/packages/{unknown} -> 404' -Method Put -Path '/api/admin/packages/999999' `
     -Token $adminToken -Expect 404 -Body @{ title = 'X'; destination = 'Y'; durationDays = 1; price = 1 }

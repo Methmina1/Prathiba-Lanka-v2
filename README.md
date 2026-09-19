@@ -109,11 +109,22 @@ from `/media/<name>` with a 30-day cache header (the name never changes, so it i
   served as an image.
 - Images are capped at 10 MB and videos at 60 MB (configurable); exceeding it is a `413`.
 - Deleting a file that a gallery item or journal cover still points at is refused with `409`, so a
-  page cannot be left pointing at a missing file. Delete the row that uses it first.
+  page cannot be left pointing at a missing file. Clear the field that uses it first.
 - Nothing transcodes or resizes: the bytes are stored as uploaded. Keep clips short.
 
 `GalleryImage.mediaType` is `IMAGE` or `VIDEO` (rows written before videos existed read as `IMAGE`),
 so the public gallery can render a clip with controls.
+
+Three records point at an uploaded file, all of them set from the admin console:
+
+| Record | Field | Shown as |
+|---|---|---|
+| `travel_package` | `image_url` | the journey card and the header of the journey page |
+| `journal_post` | `cover_image_url` | the journal card, the featured story and the story cover |
+| `gallery_image` | `image_url` + `media_type` | the public gallery (and the home strip) |
+
+Each accepts a stored path (`/media/<name>`) or any hosted URL, and each falls back to a drawn scene
+on the front end when it is empty. Package covers are optional, so `image_url = ""` clears one.
 
 ## Editable page content
 

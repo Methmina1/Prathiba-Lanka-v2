@@ -15,6 +15,7 @@ public class PackageResponseDTO {
     private BigDecimal price;
     private Integer maxCapacity;
     private String itinerary;
+    private String imageUrl;
     private PackageStatus status;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

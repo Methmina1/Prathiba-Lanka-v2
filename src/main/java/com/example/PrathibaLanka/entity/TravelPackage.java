@@ -35,6 +35,13 @@ public class TravelPackage {
     @Column(columnDefinition = "TEXT")
     private String itinerary;
 
+    /**
+     * Cover image for the journey card and detail page. Uploaded through the media library, so this
+     * holds a path like /media/<uuid>.jpg (or any hosted URL). Null means "use the drawn scene".
+     */
+    @Column(name = "image_url", length = 255)
+    private String imageUrl;
+
     @Enumerated(EnumType.STRING)
     private PackageStatus status;
 
