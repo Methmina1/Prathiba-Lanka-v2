@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Service;
@@ -26,6 +27,13 @@ public class EmailService {
     private final ObjectProvider<JavaMailSender> mailSenderProvider;
     private final EmailLogRepository emailLogRepository;
 
+    /** Sender the recipient sees. Configured rather than left to JavaMail's invented default. */
+    @Value("${app.mail.from}")
+    private String fromAddress;
+
+    @Value("${app.mail.from-name:}")
+    private String fromName;
+
     /**
      * Sends the message and always writes an {@link EmailLog} row, so failed deliveries are
      * recorded instead of silently disappearing.
@@ -41,6 +49,7 @@ public class EmailService {
         if (mailSender != null) {
             try {
                 SimpleMailMessage message = new SimpleMailMessage();
+                message.setFrom(sender());
                 message.setTo(to);
                 message.setSubject(subject);
                 message.setText(body);
@@ -68,6 +77,13 @@ public class EmailService {
         emailLogRepository.save(emailLog);
 
         return sent;
+    }
+
+    /** "Name <address>", or the bare address when no display name is configured. */
+    private String sender() {
+        return (fromName == null || fromName.isBlank())
+                ? fromAddress
+                : fromName.trim() + " <" + fromAddress + ">";
     }
 
     public boolean sendBookingPendingEmail(BookingRequest booking) {

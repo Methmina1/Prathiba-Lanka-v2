@@ -29,8 +29,11 @@ Defaults match `docker-compose.yml`. Everything can be overridden with environme
 | `DB_USERNAME` / `DB_PASSWORD` | `travel_admin` / `secret` | DB credentials |
 | `JWT_SECRET` | dev placeholder | Token signing key, min 32 bytes |
 | `JWT_EXPIRATION_MS` | `86400000` (24 h) | Token lifetime |
-| `MAIL_HOST` / `MAIL_PORT` | `smtp.mailtrap.io` / `2525` | SMTP server |
-| `MAIL_USERNAME` / `MAIL_PASSWORD` / `MAIL_SMTP_AUTH` | `testing` / `123` / `true` | SMTP credentials |
+| `MAIL_HOST` / `MAIL_PORT` | `smtp.gmail.com` / `587` | SMTP server |
+| `MAIL_USERNAME` | `prathibhalankavoyages@gmail.com` | SMTP account |
+| `MAIL_PASSWORD` | *(empty)* | **Must be set**: a Google App Password, not the account password |
+| `MAIL_SMTP_AUTH` / `MAIL_SMTP_STARTTLS` | `true` / `true` | SMTP authentication and TLS (STARTTLS is for port 587) |
+| `MAIL_FROM` / `MAIL_FROM_NAME` | `prathibhalankavoyages@gmail.com` / `PrathibaLanka` | Sender the recipient sees |
 | `BOOTSTRAP_ADMIN_ENABLED` | `true` | Create/repair the first admin on startup |
 | `BOOTSTRAP_ADMIN_EMAIL` | `admin@test.com` | Bootstrap admin login |
 | `BOOTSTRAP_ADMIN_PASSWORD` | `Admin@12345` | Bootstrap admin password |
@@ -45,8 +48,24 @@ The bootstrap admin is created only if that email does not exist, and its passwo
 when the stored hash is not a valid BCrypt hash. A valid password is never overwritten. Disable it
 in production and change the password after the first login.
 
-Mail is sent inline while handling the request. A failed send never fails the request: the attempt
-is stored in `email_log` with `sent` and `failure_reason`.
+Mail goes out as the agency's Gmail account. Two things have to be right before it will send:
+
+1. **`MAIL_PASSWORD` must be a Google App Password**, not the account password — Gmail rejects plain
+   SMTP logins. Create one at `myaccount.google.com/apppasswords` (2-step verification has to be on
+   first); it is 16 characters and shown once.
+2. **`MAIL_FROM` must be that same account**, or a verified alias on it. Gmail refuses to send as an
+   address it has not verified.
+
+`EmailService` sets the sender explicitly (`Name <address>`, both the header and the SMTP envelope),
+because JavaMail otherwise invents one like `user@host` and providers reject it.
+
+Mail is sent after the transaction commits, on a separate thread, so a failed send never fails the
+request: the attempt is stored in `email_log` with `sent` and `failure_reason`. There is no retry - a
+failure is logged and dropped, so watch that table when you change the mail settings.
+
+Gmail's own limits apply: a free account can send to roughly 500 recipients a day. Move to a
+transactional provider (SES, SendGrid, Postmark) before volume matters, and keep the same
+`MAIL_FROM` - by then the sending domain wants SPF and DKIM records.
 
 ## Authentication
 
