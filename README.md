@@ -181,6 +181,9 @@ powershell -ExecutionPolicy Bypass -File scripts/api-tests.ps1 -BaseUrl http://l
 powershell -ExecutionPolicy Bypass -File scripts/fake-smtp.ps1 -Port 2525
 # then start the app with --spring.mail.host=127.0.0.1 --spring.mail.port=2525 \
 #   --spring.mail.properties.mail.smtp.auth=false
+
+# the same sink can record what the app sent, headers included, for inspecting the sender:
+powershell -ExecutionPolicy Bypass -File scripts/fake-smtp.ps1 -Port 2525 -Dump smtp-dump.txt
 ```
 
 `scripts/api-tests.ps1` covers every endpoint plus validation, authorization and ownership cases,
@@ -188,6 +191,23 @@ and cleans up the data it creates. Upload fixtures (a 1×1 PNG, a WebM header, a
 an 11 MB image) are written to the temp directory at run time, so the suite proves the upload path,
 the signature check, the per-type size limit and the byte round trip without committing binaries.
 `mvn test` runs the context-load test.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push to `main`/`updates` and on pull requests into `main`:
+
+| Job | What it does |
+|---|---|
+| `Compile & test` | `mvn -B -ntp clean verify` against a `postgres:15` service container; uploads surefire reports + the application jar |
+| `API endpoint tests` | boots the built jar against the same Postgres, points mail at `scripts/fake-smtp.ps1`, waits for readiness, then runs `scripts/api-tests.ps1` (159 checks) and verifies the mail sender |
+
+The last step of the second job posts a contact enquiry and asserts, from the sink's dump, that the
+configured `From` reached the wire - both as the `From:` header and as the SMTP envelope sender
+(`MAIL FROM:`), because providers reject a message without a sender and SPF aligns on the envelope.
+Set `MAIL_FROM` / `MAIL_FROM_NAME` in that job's `env:` to change what it checks for.
+
+Branch protection on `main` should require both checks. Mail settings, the test database and the
+bootstrap admin come from the workflow `env:` block (see `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`).
 
 ## Concurrency
 
@@ -212,18 +232,6 @@ handled explicitly:
 
 `scripts/api-tests.ps1` includes a concurrency section: 5 parallel bookings against a 3-seat package
 (exactly 3 accepted) and 2 parallel confirmations of one booking (one wins, one 409).
-
-## Continuous integration
-
-`.github/workflows/ci.yml` runs on every push to `main`/`updates` and on pull requests into `main`:
-
-| Job | What it does |
-|---|---|
-| `Compile & test` | `mvn -B -ntp clean verify` against a `postgres:15` service container; uploads surefire reports + the application jar |
-| `API endpoint tests` | boots the built jar against the same Postgres, points mail at `scripts/fake-smtp.ps1`, waits for readiness, then runs `scripts/api-tests.ps1` |
-
-Branch protection on `main` should require both checks. Mail settings, the test database and the
-bootstrap admin come from the workflow `env:` block (see `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`).
 
 ## Known gaps
 
