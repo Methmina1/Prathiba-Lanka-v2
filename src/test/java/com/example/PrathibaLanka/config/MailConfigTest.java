@@ -18,13 +18,13 @@ class MailConfigTest {
 
     @Test
     void compactsAnAppPasswordPastedWithItsDisplaySpaces() {
-        // the shape Google shows: four groups of four
-        assertThat(senderWith("abcd efgh ijkl mnop").getPassword()).isEqualTo("abcdefghijklmnop");
+        // the shape Google shows: four groups of four. Deliberately not a credential-looking value.
+        assertThat(senderWith("wxyz wxyz wxyz wxyz").getPassword()).isEqualTo("wxyzwxyzwxyzwxyz");
     }
 
     @Test
     void leavesAnUnspacedPasswordAlone() {
-        assertThat(senderWith("abcdefghijklmnop").getPassword()).isEqualTo("abcdefghijklmnop");
+        assertThat(senderWith("wxyzwxyzwxyzwxyz").getPassword()).isEqualTo("wxyzwxyzwxyzwxyz");
     }
 
     @Test

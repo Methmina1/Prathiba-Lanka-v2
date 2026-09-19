@@ -6,9 +6,9 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
 
 /**
- * Google displays an App Password as four groups of four characters - {@code abcd efgh ijkl mnop} -
- * and people paste it with the spaces in. SMTP wants the sixteen characters, so a spaced value is
- * compacted before it reaches the server.
+ * Google displays an App Password as four groups of four characters and people paste it with the
+ * spaces in. SMTP wants the sixteen characters, so a spaced value is compacted before it reaches the
+ * server.
  *
  * <p>Only a value that is exactly sixteen characters once the whitespace is removed is touched, so an
  * ordinary password that happens to contain a space is left alone.
