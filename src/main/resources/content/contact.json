@@ -1,4 +1,4 @@
-{
+﻿{
   "hero": {
     "eyebrow": "Contact",
     "title": "Talk to us",
@@ -17,7 +17,7 @@
     {
       "icon": "map",
       "label": "Office",
-      "value": "Colombo, Sri Lanka",
+      "value": "Kurunagala, Sri Lanka",
       "note": "Visits by appointment"
     },
     {
@@ -30,6 +30,6 @@
   "aside": {
     "heading": "Already sent a request?",
     "text": "Every enquiry gets an eight-character PIN. Use it to follow the progress of your booking at any time - no account needed.",
-    "mapLabel": "Colombo, Sri Lanka"
+    "mapLabel": "Kurunagala, Sri Lanka"
   }
 }
