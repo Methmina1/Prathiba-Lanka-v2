@@ -77,11 +77,13 @@ public class PackageController {
         dto.setPackageId(pkg.getPackageId());
         dto.setTitle(pkg.getTitle());
         dto.setDescription(pkg.getDescription());
+        dto.setLongDescription(pkg.getLongDescription());
         dto.setDestination(pkg.getDestination());
         dto.setDurationDays(pkg.getDurationDays());
         dto.setPrice(pkg.getPrice());
         dto.setMaxCapacity(pkg.getMaxCapacity());
         dto.setItinerary(pkg.getItinerary());
+        dto.setImageUrl(pkg.getImageUrl());
         dto.setStatus(pkg.getStatus());
         dto.setCreatedAt(pkg.getCreatedAt());
         dto.setUpdatedAt(pkg.getUpdatedAt());

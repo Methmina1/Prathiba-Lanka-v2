@@ -30,11 +30,13 @@ public class TravelPackageService {
         TravelPackage pkg = new TravelPackage();
         pkg.setTitle(dto.getTitle());
         pkg.setDescription(dto.getDescription());
+        pkg.setLongDescription(dto.getLongDescription());
         pkg.setDestination(dto.getDestination());
         pkg.setDurationDays(dto.getDurationDays());
         pkg.setPrice(dto.getPrice());
         pkg.setMaxCapacity(dto.getMaxCapacity());
         pkg.setItinerary(dto.getItinerary());
+        pkg.setImageUrl(blankToNull(dto.getImageUrl()));
         pkg.setStatus(dto.getStatus() != null ? dto.getStatus() : PackageStatus.ACTIVE);
         pkg.setCreatedBy(admin.getAdminId());
 
@@ -48,16 +50,25 @@ public class TravelPackageService {
 
         pkg.setTitle(dto.getTitle());
         pkg.setDescription(dto.getDescription());
+        pkg.setLongDescription(dto.getLongDescription());
         pkg.setDestination(dto.getDestination());
         pkg.setDurationDays(dto.getDurationDays());
         pkg.setPrice(dto.getPrice());
         pkg.setMaxCapacity(dto.getMaxCapacity());
         pkg.setItinerary(dto.getItinerary());
+        if (dto.getImageUrl() != null) {
+            // An empty string clears the image, so the drawn scene comes back.
+            pkg.setImageUrl(blankToNull(dto.getImageUrl()));
+        }
         if (dto.getStatus() != null) {
             pkg.setStatus(dto.getStatus());
         }
 
         return packageRepo.save(pkg);
+    }
+
+    private String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     /** Hard delete: fails with 409 while bookings still reference the package. */

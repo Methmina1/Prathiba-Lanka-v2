@@ -6,4 +6,6 @@ import java.util.List;
 
 public interface JournalPostRepository extends JpaRepository<JournalPost, Long> {
     List<JournalPost> findByStatus(String status);
+
+    boolean existsByCoverImageUrl(String coverImageUrl);
 }

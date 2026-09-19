@@ -19,6 +19,8 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.time.LocalDateTime;
@@ -51,6 +53,36 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, Object>> handleForbidden(ForbiddenException ex,
                                                                HttpServletRequest request) {
         return build(HttpStatus.FORBIDDEN, "Forbidden", ex.getMessage(), null, request);
+    }
+
+    @ExceptionHandler(ConflictException.class)
+    public ResponseEntity<Map<String, Object>> handleConflict(ConflictException ex,
+                                                              HttpServletRequest request) {
+        return build(HttpStatus.CONFLICT, "Conflict", ex.getMessage(), null, request);
+    }
+
+    /** A file above app.media.max-*-bytes, refused before anything is written. */
+    @ExceptionHandler(PayloadTooLargeException.class)
+    public ResponseEntity<Map<String, Object>> handlePayloadTooLarge(PayloadTooLargeException ex,
+                                                                     HttpServletRequest request) {
+        return build(HttpStatus.PAYLOAD_TOO_LARGE, "Payload Too Large", ex.getMessage(), null, request);
+    }
+
+    /** The multipart parser refuses the request before the controller runs, so map it here. */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<Map<String, Object>> handleMaxUpload(MaxUploadSizeExceededException ex,
+                                                               HttpServletRequest request) {
+        return build(HttpStatus.PAYLOAD_TOO_LARGE, "Payload Too Large",
+                "The uploaded file is larger than this server accepts.", null, request);
+    }
+
+    /** A multipart request that is malformed or missing its file part. */
+    @ExceptionHandler(MultipartException.class)
+    public ResponseEntity<Map<String, Object>> handleMultipart(MultipartException ex,
+                                                               HttpServletRequest request) {
+        return build(HttpStatus.BAD_REQUEST, "Bad Request",
+                "The upload could not be read. Send the file as a multipart/form-data part named 'file'.",
+                null, request);
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

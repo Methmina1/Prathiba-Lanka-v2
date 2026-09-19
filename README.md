@@ -1,13 +1,15 @@
 # PrathibaLanka
 
 REST backend for a Sri Lanka travel agency: travel packages, booking requests with PIN tracking,
-customer reviews, gallery, journal posts and contact queries.
+customer reviews, gallery, journal posts, contact queries, uploaded media and the editable copy of
+the public About/Contact pages.
 
 ## Stack
 
 - Java 21, Spring Boot 4.1.1 (Web MVC, Data JPA, Security, Validation, Mail)
 - PostgreSQL 15 (Docker), Hibernate `ddl-auto=update`
 - JWT (JJWT 0.12.6) bearer tokens, BCrypt password hashes
+- Jackson 3 (`tools.jackson`) — Spring Boot 4 no longer uses Jackson 2 for HTTP bodies
 
 ## Run
 
@@ -27,18 +29,43 @@ Defaults match `docker-compose.yml`. Everything can be overridden with environme
 | `DB_USERNAME` / `DB_PASSWORD` | `travel_admin` / `secret` | DB credentials |
 | `JWT_SECRET` | dev placeholder | Token signing key, min 32 bytes |
 | `JWT_EXPIRATION_MS` | `86400000` (24 h) | Token lifetime |
-| `MAIL_HOST` / `MAIL_PORT` | `smtp.mailtrap.io` / `2525` | SMTP server |
-| `MAIL_USERNAME` / `MAIL_PASSWORD` / `MAIL_SMTP_AUTH` | `testing` / `123` / `true` | SMTP credentials |
+| `MAIL_HOST` / `MAIL_PORT` | `smtp.gmail.com` / `587` | SMTP server |
+| `MAIL_USERNAME` | `prathibhalankavoyages@gmail.com` | SMTP account |
+| `MAIL_PASSWORD` | *(empty)* | **Must be set**: a Google App Password, not the account password |
+| `MAIL_SMTP_AUTH` / `MAIL_SMTP_STARTTLS` | `true` / `true` | SMTP authentication and TLS (STARTTLS is for port 587) |
+| `MAIL_FROM` / `MAIL_FROM_NAME` | `prathibhalankavoyages@gmail.com` / `PrathibaLanka` | Sender the recipient sees |
 | `BOOTSTRAP_ADMIN_ENABLED` | `true` | Create/repair the first admin on startup |
 | `BOOTSTRAP_ADMIN_EMAIL` | `admin@test.com` | Bootstrap admin login |
 | `BOOTSTRAP_ADMIN_PASSWORD` | `Admin@12345` | Bootstrap admin password |
+| `BOOTSTRAP_CONTENT_ENABLED` | `true` | Seed the About/Contact pages when their rows are missing |
+| `MEDIA_DIR` | `uploads` | Directory the uploaded files are written to |
+| `MEDIA_URL_PREFIX` | `/media` | Public path the files are served from |
+| `MEDIA_MAX_IMAGE_BYTES` | `10485760` (10 MB) | Image upload limit |
+| `MEDIA_MAX_VIDEO_BYTES` | `62914560` (60 MB) | Video upload limit |
+| `MEDIA_MAX_UPLOAD` / `MEDIA_MAX_REQUEST` | `64MB` / `70MB` | Multipart ceiling (hard limit above the per-type ones) |
 
 The bootstrap admin is created only if that email does not exist, and its password is reset only
 when the stored hash is not a valid BCrypt hash. A valid password is never overwritten. Disable it
 in production and change the password after the first login.
 
-Mail is sent inline while handling the request. A failed send never fails the request: the attempt
-is stored in `email_log` with `sent` and `failure_reason`.
+Mail goes out as the agency's Gmail account. Two things have to be right before it will send:
+
+1. **`MAIL_PASSWORD` must be a Google App Password**, not the account password — Gmail rejects plain
+   SMTP logins. Create one at `myaccount.google.com/apppasswords` (2-step verification has to be on
+   first); it is 16 characters and shown once.
+2. **`MAIL_FROM` must be that same account**, or a verified alias on it. Gmail refuses to send as an
+   address it has not verified.
+
+`EmailService` sets the sender explicitly (`Name <address>`, both the header and the SMTP envelope),
+because JavaMail otherwise invents one like `user@host` and providers reject it.
+
+Mail is sent after the transaction commits, on a separate thread, so a failed send never fails the
+request: the attempt is stored in `email_log` with `sent` and `failure_reason`. There is no retry - a
+failure is logged and dropped, so watch that table when you change the mail settings.
+
+Gmail's own limits apply: a free account can send to roughly 500 recipients a day. Move to a
+transactional provider (SES, SendGrid, Postmark) before volume matters, and keep the same
+`MAIL_FROM` - by then the sending domain wants SPF and DKIM records.
 
 ## Authentication
 
@@ -63,6 +90,8 @@ Public
 | GET | `/api/gallery`, `/api/gallery/{id}`, `/api/gallery/package/{packageId}` |
 | GET | `/api/journal/published`, `/api/journal/published/{id}` |
 | GET | `/api/bookings/track?pin=` |
+| GET | `/api/content/{section}` (`about`, `contact`) |
+| GET | `/media/{file}` |
 | POST | `/api/contact` |
 
 Customer (bearer token, `ROLE_CUSTOMER`)
@@ -78,12 +107,56 @@ Admin (bearer token, `ROLE_ADMIN`)
 | Method | Path |
 |---|---|
 | GET | `/api/admin/packages`, `/api/admin/bookings?status=`, `/api/admin/queries?onlyNew=`, `/api/admin/journal`, `/api/admin/journal/{id}` |
-| POST | `/api/admin/packages`, `/api/admin/gallery`, `/api/admin/journal` |
-| PUT | `/api/admin/packages/{id}`, `/api/admin/gallery/{id}`, `/api/admin/journal/{id}` |
+| GET | `/api/admin/media?type=`, `/api/admin/media/limits`, `/api/admin/content` |
+| POST | `/api/admin/packages`, `/api/admin/gallery`, `/api/admin/journal`, `/api/admin/media` (multipart) |
+| PUT | `/api/admin/packages/{id}`, `/api/admin/gallery/{id}`, `/api/admin/journal/{id}`, `/api/admin/content/{section}` |
 | PATCH | `/api/admin/packages/{id}/deactivate`, `/api/admin/bookings/{id}/confirm`, `/api/admin/bookings/{id}/reject`, `/api/admin/queries/{id}/respond`, `/api/admin/journal/{id}/publish`, `/api/admin/journal/{id}/unpublish` |
-| DELETE | `/api/admin/packages/{id}`, `/api/admin/gallery/{id}`, `/api/admin/journal/{id}`, `/api/admin/reviews/{id}` |
+| DELETE | `/api/admin/packages/{id}`, `/api/admin/gallery/{id}`, `/api/admin/journal/{id}`, `/api/admin/reviews/{id}`, `/api/admin/media/{id}` |
 
 Booking status flow: `PENDING` → `CONFIRMED` or `REJECTED`; only pending bookings can be rejected.
+
+## Media (images and short videos)
+
+`POST /api/admin/media` takes `multipart/form-data` with a `file` part and an optional `title`. The
+stored file is written to `app.media.dir` under a generated `<uuid>.<ext>` name and served publicly
+from `/media/<name>` with a 30-day cache header (the name never changes, so it is safe to cache).
+
+- Accepted types: `image/jpeg`, `image/png`, `image/webp`, `image/gif`, `image/avif`,
+  `video/mp4`, `video/webm`, `video/quicktime`. Anything else is a `400`.
+- The extension is chosen by the server from that table, never from the client's filename, and the
+  first bytes of the file must match the declared format — so a renamed file is refused rather than
+  served as an image.
+- Images are capped at 10 MB and videos at 60 MB (configurable); exceeding it is a `413`.
+- Deleting a file that a gallery item or journal cover still points at is refused with `409`, so a
+  page cannot be left pointing at a missing file. Clear the field that uses it first.
+- Nothing transcodes or resizes: the bytes are stored as uploaded. Keep clips short.
+
+`GalleryImage.mediaType` is `IMAGE` or `VIDEO` (rows written before videos existed read as `IMAGE`),
+so the public gallery can render a clip with controls.
+
+Three records point at an uploaded file, all of them set from the admin console:
+
+| Record | Field | Shown as |
+|---|---|---|
+| `travel_package` | `image_url` | the journey card and the header of the journey page |
+| `journal_post` | `cover_image_url` | the journal card, the featured story and the story cover |
+| `gallery_image` | `image_url` + `media_type` | the public gallery (and the home strip) |
+
+Each accepts a stored path (`/media/<name>`) or any hosted URL, and each falls back to a drawn scene
+on the front end when it is empty. Package covers are optional, so `image_url = ""` clears one.
+
+## Editable page content
+
+The About and Contact pages are stored in `page_content` as one JSON document per section, so the
+copy changes without a deployment.
+
+- `GET /api/content/{section}` — public; `404` when the section has no row.
+- `PUT /api/admin/content/{section}` — replaces the payload. The section is validated first:
+  required blocks (`hero`, `story`, `values`, `timeline` for About; `hero`, `aside` and `cards` for
+  Contact), required lists with their maximum lengths, text-only leaves and per-field length budgets.
+  A rejected save returns `400` listing every problem, and the stored copy is left untouched.
+- On startup `ContentBootstrapConfig` seeds any missing section from `src/main/resources/content/`.
+  An edited page is never overwritten by a restart.
 
 ## Errors
 
@@ -95,7 +168,8 @@ Booking status flow: `PENDING` → `CONFIRMED` or `REJECTED`; only pending booki
 
 `400` validation/malformed input · `401` missing or invalid token, bad credentials ·
 `403` wrong role or acting on another account · `404` unknown id/route ·
-`405` wrong method · `409` duplicate or referenced record · `500` unexpected (details stay in the log).
+`405` wrong method · `409` duplicate or referenced record · `413` upload too large ·
+`500` unexpected (details stay in the log).
 
 ## Tests
 
@@ -107,10 +181,33 @@ powershell -ExecutionPolicy Bypass -File scripts/api-tests.ps1 -BaseUrl http://l
 powershell -ExecutionPolicy Bypass -File scripts/fake-smtp.ps1 -Port 2525
 # then start the app with --spring.mail.host=127.0.0.1 --spring.mail.port=2525 \
 #   --spring.mail.properties.mail.smtp.auth=false
+
+# the same sink can record what the app sent, headers included, for inspecting the sender:
+powershell -ExecutionPolicy Bypass -File scripts/fake-smtp.ps1 -Port 2525 -Dump smtp-dump.txt
 ```
 
 `scripts/api-tests.ps1` covers every endpoint plus validation, authorization and ownership cases,
-and cleans up the data it creates. `mvn test` runs the context-load test.
+and cleans up the data it creates. Upload fixtures (a 1×1 PNG, a WebM header, a mislabeled file and
+an 11 MB image) are written to the temp directory at run time, so the suite proves the upload path,
+the signature check, the per-type size limit and the byte round trip without committing binaries.
+`mvn test` runs the context-load test.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push to `main`/`updates` and on pull requests into `main`:
+
+| Job | What it does |
+|---|---|
+| `Compile & test` | `mvn -B -ntp clean verify` against a `postgres:15` service container; uploads surefire reports + the application jar |
+| `API endpoint tests` | boots the built jar against the same Postgres, points mail at `scripts/fake-smtp.ps1`, waits for readiness, then runs `scripts/api-tests.ps1` (159 checks) and verifies the mail sender |
+
+The last step of the second job posts a contact enquiry and asserts, from the sink's dump, that the
+configured `From` reached the wire - both as the `From:` header and as the SMTP envelope sender
+(`MAIL FROM:`), because providers reject a message without a sender and SPF aligns on the envelope.
+Set `MAIL_FROM` / `MAIL_FROM_NAME` in that job's `env:` to change what it checks for.
+
+Branch protection on `main` should require both checks. Mail settings, the test database and the
+bootstrap admin come from the workflow `env:` block (see `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`).
 
 ## Concurrency
 
@@ -136,18 +233,6 @@ handled explicitly:
 `scripts/api-tests.ps1` includes a concurrency section: 5 parallel bookings against a 3-seat package
 (exactly 3 accepted) and 2 parallel confirmations of one booking (one wins, one 409).
 
-## Continuous integration
-
-`.github/workflows/ci.yml` runs on every push to `main`/`updates` and on pull requests into `main`:
-
-| Job | What it does |
-|---|---|
-| `Compile & test` | `mvn -B -ntp clean verify` against a `postgres:15` service container; uploads surefire reports + the application jar |
-| `API endpoint tests` | boots the built jar against the same Postgres, points mail at `scripts/fake-smtp.ps1`, waits for readiness, then runs `scripts/api-tests.ps1` |
-
-Branch protection on `main` should require both checks. Mail settings, the test database and the
-bootstrap admin come from the workflow `env:` block (see `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`).
-
 ## Known gaps
 
 - Schema comes from Hibernate `ddl-auto=update`; use Flyway or Liquibase before production.
@@ -155,5 +240,10 @@ bootstrap admin come from the workflow `env:` block (see `DB_URL`, `DB_USERNAME`
 - List endpoints return everything (`findAll`) — add pagination as data grows.
 - `spring.jpa.show-sql=true` is left on for development.
 - Tokens are stateless with no revocation or refresh.
+- Uploads go to the local disk, which does not survive a container rebuild and is not shared between
+  instances — move `app.media.dir` to an object store (S3 and the like) before scaling out.
+- Uploaded bytes are served back as stored: no transcoding, resizing or thumbnail generation, and
+  clips are not length-checked, only size-checked.
+- The media library is admin-only with no per-file ownership or audit trail beyond `uploaded_by`.
 - Scheduled work (reminders, stale pending bookings) is not implemented yet; when it is added,
   running more than one instance needs a lock (ShedLock) so jobs do not run twice.

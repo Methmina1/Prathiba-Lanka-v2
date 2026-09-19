@@ -1,0 +1,76 @@
+{
+  "hero": {
+    "eyebrow": "About us",
+    "title": "Arranged by people who live here",
+    "lede": "PrathibaLanka is a small Sri Lankan travel house. We build private journeys for travellers who would rather see four places properly than fourteen badly.",
+    "scenery": "train",
+    "image": ""
+  },
+  "story": {
+    "eyebrow": "Our story",
+    "heading": "Fewer places. Longer looks.",
+    "lede": "We started with one vehicle and a list of places we loved. That has not really changed: we still plan every journey by hand, and we still send people to the guesthouses we would send our own families to.",
+    "badgeTitle": "Since 2014",
+    "badgeText": "Arranging journeys from Colombo",
+    "scenery": "tea",
+    "image": "",
+    "points": [
+      {
+        "title": "One consultant per journey",
+        "text": "The person who plans your trip is the person who answers when you write."
+      },
+      {
+        "title": "On the ground, always",
+        "text": "A local number that is answered day or night, for the whole of your stay."
+      }
+    ]
+  },
+  "values": {
+    "eyebrow": "What we hold to",
+    "heading": "Four things we do not compromise on",
+    "items": [
+      {
+        "title": "Local knowledge, not a script",
+        "text": "Our guides grew up with these roads, temples and tea estates. They will tell you when to go, and when not to."
+      },
+      {
+        "title": "Private by default",
+        "text": "No shared coaches, no strangers at breakfast. Your vehicle, your guide, your pace."
+      },
+      {
+        "title": "Priced in the open",
+        "text": "One figure per person, agreed before you travel. No commission stops, no surprise extras."
+      },
+      {
+        "title": "Care for the island",
+        "text": "Family-run stays, plastic-free journeys and wildlife viewed at a respectful distance."
+      }
+    ]
+  },
+  "timeline": {
+    "eyebrow": "Milestones",
+    "heading": "How we got here",
+    "items": [
+      {
+        "year": "2014",
+        "title": "A single vehicle in Colombo",
+        "text": "Two guides, one van and a notebook of favourite guesthouses along the south coast."
+      },
+      {
+        "year": "2017",
+        "title": "The hill country routes",
+        "text": "We mapped the tea line properly - which carriage, which side, which stops are worth the walk."
+      },
+      {
+        "year": "2021",
+        "title": "Wildlife done quietly",
+        "text": "Long relationships with park trackers, and a firm rule about keeping our distance."
+      },
+      {
+        "year": "Today",
+        "title": "A small team, still on the road",
+        "text": "We keep the number of journeys per season low enough that every traveller gets a real consultant."
+      }
+    ]
+  }
+}

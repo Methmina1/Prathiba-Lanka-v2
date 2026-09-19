@@ -53,6 +53,9 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/reviews", "/api/reviews/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/gallery", "/api/gallery/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/journal/published", "/api/journal/published/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/content", "/api/content/**").permitAll()
+                        // Uploaded images and short videos are part of the public pages.
+                        .requestMatchers(HttpMethod.GET, "/media/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/contact").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/bookings/track").permitAll()
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")

@@ -3,6 +3,7 @@ package com.example.PrathibaLanka.controller;
 import com.example.PrathibaLanka.dto.request.GalleryUploadRequestDTO;
 import com.example.PrathibaLanka.dto.response.GalleryResponseDTO;
 import com.example.PrathibaLanka.entity.GalleryImage;
+import com.example.PrathibaLanka.enums.MediaType;
 import com.example.PrathibaLanka.security.UserPrincipal;
 import com.example.PrathibaLanka.service.GalleryService;
 import jakarta.validation.Valid;
@@ -44,7 +45,7 @@ public class GalleryController {
             @Valid @RequestBody GalleryUploadRequestDTO dto,
             @AuthenticationPrincipal UserPrincipal principal) {
         GalleryImage img = galleryService.uploadImage(
-                dto.getImageUrl(), dto.getCaption(), dto.getPackageId(), principal.getUserId());
+                dto.getImageUrl(), dto.getCaption(), dto.getPackageId(), dto.getMediaType(), principal.getUserId());
         return ResponseEntity.status(HttpStatus.CREATED).body(toDTO(img));
     }
 
@@ -53,7 +54,7 @@ public class GalleryController {
             @PathVariable Long id,
             @RequestBody GalleryUploadRequestDTO dto) {
         return ResponseEntity.ok(toDTO(galleryService.updateImage(
-                id, dto.getImageUrl(), dto.getCaption(), dto.getPackageId())));
+                id, dto.getImageUrl(), dto.getCaption(), dto.getPackageId(), dto.getMediaType())));
     }
 
     @DeleteMapping("/api/admin/gallery/{id}")
@@ -69,6 +70,8 @@ public class GalleryController {
         dto.setImageId(img.getImageId());
         dto.setImageUrl(img.getImageUrl());
         dto.setCaption(img.getCaption());
+        // Rows written before videos existed have no media type; they are images.
+        dto.setMediaType(img.getMediaType() == null ? MediaType.IMAGE : img.getMediaType());
         if (img.getTravelPackage() != null) {
             dto.setPackageId(img.getTravelPackage().getPackageId());
             dto.setPackageTitle(img.getTravelPackage().getTitle());

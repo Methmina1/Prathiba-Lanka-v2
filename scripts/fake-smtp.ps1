@@ -14,11 +14,25 @@
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File scripts/fake-smtp.ps1 -Port 2525
+
+.PARAMETER Dump
+    Optional file to append each received message to, headers included, so what the application
+    actually sent (sender, recipient, subject) can be asserted. CI uses this to prove the configured
+    From address reaches the wire; leave it out for a quiet sink.
 #>
 [CmdletBinding()]
-param([int]$Port = 2525)
+param(
+    [int]$Port = 2525,
+    [string]$Dump
+)
 
 $ErrorActionPreference = 'Stop'
+
+if ($Dump) {
+    $dumpPath = [System.IO.Path]::GetFullPath($Dump)
+    Set-Content -Path $dumpPath -Value "fake-smtp dump opened $(Get-Date -Format o)" -Encoding UTF8
+    Write-Host "fake-smtp: writing messages to $dumpPath"
+}
 
 $listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, $Port)
 $listener.Start()
@@ -37,6 +51,7 @@ while ($true) {
         $inData = $false
         $from = ''
         $to = ''
+        $lines = New-Object System.Collections.ArrayList
 
         while ($true) {
             $line = $reader.ReadLine()
@@ -47,7 +62,14 @@ while ($true) {
                     $inData = $false
                     $writer.WriteLine('250 OK queued')
                     Write-Host "fake-smtp: accepted message from $from to $to"
+                    if ($Dump) {
+                        $record = "===== MESSAGE =====`r`n$from`r`n$to`r`n" + ($lines -join "`r`n")
+                        Add-Content -Path $dumpPath -Value $record -Encoding UTF8
+                    }
+                    continue
                 }
+                # undo SMTP dot-stuffing so the dumped body matches what was sent
+                [void]$lines.Add(($line -replace '^\.\.', '.'))
                 continue
             }
 

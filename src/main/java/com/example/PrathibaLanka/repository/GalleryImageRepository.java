@@ -6,4 +6,6 @@ import java.util.List;
 
 public interface GalleryImageRepository extends JpaRepository<GalleryImage, Long> {
     List<GalleryImage> findByTravelPackage_PackageId(Long packageId);
+
+    boolean existsByImageUrl(String imageUrl);
 }

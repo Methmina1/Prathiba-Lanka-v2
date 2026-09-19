@@ -1,5 +1,6 @@
 package com.example.PrathibaLanka.dto.response;
 
+import com.example.PrathibaLanka.enums.MediaType;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -11,6 +12,7 @@ public class GalleryResponseDTO {
     private String caption;
     private Long packageId;
     private String packageTitle;
+    private MediaType mediaType;
     private String uploadedByName;
     private LocalDateTime uploadedAt;
 }

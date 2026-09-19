@@ -1,0 +1,42 @@
+{
+  "hero": {
+    "eyebrow": "Contact",
+    "title": "Talk to us",
+    "lede": "Tell us roughly when you are coming and what you would like to see. A consultant replies with a draft itinerary and a price.",
+    "scenery": "coast",
+    "image": ""
+  },
+  "cards": [
+    {
+      "icon": "phone",
+      "label": "Call or WhatsApp",
+      "value": "+94 77 000 0000",
+      "href": "tel:+94770000000",
+      "note": "Answered 08:00 - 21:00 Sri Lanka time"
+    },
+    {
+      "icon": "mail",
+      "label": "Email",
+      "value": "hello@prathibalanka.lk",
+      "href": "mailto:hello@prathibalanka.lk",
+      "note": "Replies within one working day"
+    },
+    {
+      "icon": "map",
+      "label": "Office",
+      "value": "Colombo, Sri Lanka",
+      "note": "Visits by appointment"
+    },
+    {
+      "icon": "clock",
+      "label": "Response time",
+      "value": "Under 24 hours",
+      "note": "Usually the same afternoon"
+    }
+  ],
+  "aside": {
+    "heading": "Already sent a request?",
+    "text": "Every enquiry gets an eight-character PIN. Use it to follow the progress of your booking at any time - no account needed.",
+    "mapLabel": "Colombo, Sri Lanka"
+  }
+}
