@@ -30,6 +30,7 @@ public class TravelPackageService {
         TravelPackage pkg = new TravelPackage();
         pkg.setTitle(dto.getTitle());
         pkg.setDescription(dto.getDescription());
+        pkg.setLongDescription(dto.getLongDescription());
         pkg.setDestination(dto.getDestination());
         pkg.setDurationDays(dto.getDurationDays());
         pkg.setPrice(dto.getPrice());
@@ -49,6 +50,7 @@ public class TravelPackageService {
 
         pkg.setTitle(dto.getTitle());
         pkg.setDescription(dto.getDescription());
+        pkg.setLongDescription(dto.getLongDescription());
         pkg.setDestination(dto.getDestination());
         pkg.setDurationDays(dto.getDurationDays());
         pkg.setPrice(dto.getPrice());

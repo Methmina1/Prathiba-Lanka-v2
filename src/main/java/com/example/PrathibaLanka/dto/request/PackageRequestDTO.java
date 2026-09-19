@@ -13,7 +13,11 @@ public class PackageRequestDTO {
     @NotBlank(message = "Title is required")
     private String title;
 
+    /** One or two sentences: what the card and the journey header show. */
     private String description;
+
+    /** The full write-up for the journey page and the "read more" dialog. */
+    private String longDescription;
 
     @NotBlank(message = "Destination is required")
     private String destination;

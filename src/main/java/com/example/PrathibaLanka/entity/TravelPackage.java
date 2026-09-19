@@ -19,8 +19,16 @@ public class TravelPackage {
     @Column(nullable = false, length = 150)
     private String title;
 
+    /** One or two sentences for the card and the journey header. */
     @Column(columnDefinition = "TEXT")
     private String description;
+
+    /**
+     * The full write-up, shown on the journey page and in the "read more" dialog: several paragraphs
+     * separated by a blank line.
+     */
+    @Column(name = "long_description", columnDefinition = "TEXT")
+    private String longDescription;
 
     @Column(length = 150)
     private String destination;

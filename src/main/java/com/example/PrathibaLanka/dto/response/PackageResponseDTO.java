@@ -10,6 +10,7 @@ public class PackageResponseDTO {
     private Long packageId;
     private String title;
     private String description;
+    private String longDescription;
     private String destination;
     private Integer durationDays;
     private BigDecimal price;

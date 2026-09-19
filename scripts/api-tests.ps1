@@ -340,9 +340,15 @@ Section '3. Travel packages'
 $newPkg = Test-Api -Name 'POST /api/admin/packages (admin) -> 201' -Method Post -Path '/api/admin/packages' `
     -Token $adminToken -Expect 201 `
     -Body @{ title = "Test Package $($RunId)"; description = 'created by api-tests'; destination = "Bali $($RunId)"; `
-             durationDays = 3; price = 199.99; maxCapacity = 10; itinerary = 'Day 1: test'; status = 'ACTIVE' } `
+             durationDays = 3; price = 199.99; maxCapacity = 10; itinerary = 'Day 1: test'; status = 'ACTIVE'; `
+             longDescription = "First paragraph of the write-up.`n`nSecond paragraph." } `
     -Check { param($r) $r.Json.status -eq 'ACTIVE' } -CheckDesc 'created as ACTIVE' -Capture
 $pkgId = $newPkg.Json.packageId
+
+# The card shows the short description; the dialog and the journey page show this one.
+Test-Api -Name 'the full description round-trips, paragraphs and all' -Method Get -Path "/api/packages/$pkgId" -Expect 200 `
+    -Check { param($r) $r.Json.longDescription -eq "First paragraph of the write-up.`n`nSecond paragraph." } `
+    -CheckDesc 'longDescription stored and returned unchanged'
 
 Test-Api -Name 'GET /api/packages (public)' -Method Get -Path '/api/packages' -Expect 200 `
     -Check { param($r) $r.Json.packageId -contains $pkgId } -CheckDesc 'lists the active package'
