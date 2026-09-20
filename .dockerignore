@@ -1,0 +1,26 @@
+# Build context for the API image. Everything here is either rebuilt inside the image or is local
+# state that must not travel: a smaller context is a faster upload, and uploads/ holds customer
+# media that has no business being copied into an image layer.
+
+target/
+uploads/
+
+.git/
+.github/
+.idea/
+*.iml
+
+# The Maven wrapper and the local test scripts are development tools; the build stage uses the
+# Maven that ships in the builder image.
+.mvn/
+mvnw
+mvnw.cmd
+scripts/
+
+docker-compose.yml
+HELP.md
+README.md
+
+# Nothing below is needed at build time, and .env style files must never enter an image layer.
+.env
+.env.*

@@ -30,7 +30,11 @@ public class JwtService {
     @PostConstruct
     void validateSecret() {
         String secret = jwtProperties.getSecret();
-        if (secret == null || secret.isBlank()) {
+        // A missing JWT_SECRET does not raise a placeholder error the way ${MEDIA_DIR} does:
+        // @ConfigurationProperties binds the raw text "${JWT_SECRET}" and this check is what catches it.
+        // Say what is wrong instead of reporting that the placeholder is 13 bytes long.
+        boolean unresolvedPlaceholder = secret != null && secret.startsWith("${") && secret.endsWith("}");
+        if (secret == null || secret.isBlank() || unresolvedPlaceholder) {
             throw new IllegalStateException(
                     "app.jwt.secret is not configured. Set the JWT_SECRET environment variable.");
         }

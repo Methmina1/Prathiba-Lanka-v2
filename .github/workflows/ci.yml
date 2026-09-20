@@ -193,3 +193,85 @@ jobs:
       - name: Mail dump
         if: always()
         run: tail -n 80 smtp-dump.txt || true
+
+  # The artifact Railway actually runs: the image, started the way the platform starts it, with the
+  # prod profile against a real Postgres. This is what proves the safety rails work - the container
+  # exits when JWT_SECRET is missing instead of running on the repository's development key - that
+  # Flyway creates the schema on an empty database, and that /actuator/health, the endpoint the
+  # platform's health check polls, reports UP.
+  docker-image:
+    name: Docker image starts with the prod profile
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: travel_agency_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -t prathibalanka-api:ci .
+
+      - name: It refuses to start without JWT_SECRET
+        run: |
+          if timeout 90 docker run --rm \
+              -e DB_URL=jdbc:postgresql://host.docker.internal:5432/travel_agency_test \
+              -e DB_USERNAME=testuser -e DB_PASSWORD=testpassword \
+              --add-host=host.docker.internal:host-gateway \
+              prathibalanka-api:ci > /tmp/no-secret.log 2>&1; then
+            echo "::error::the image started with no JWT_SECRET"; exit 1
+          fi
+          grep -q 'JWT_SECRET' /tmp/no-secret.log || { tail -n 40 /tmp/no-secret.log; exit 1; }
+          echo "Refused to start, and named the variable."
+
+      - name: Start it against Postgres
+        run: |
+          docker run -d --name api -p 8080:8080 \
+            --add-host=host.docker.internal:host-gateway \
+            -e JWT_SECRET=ci-only-throwaway-secret-long-enough-for-hs256 \
+            -e DB_URL=jdbc:postgresql://host.docker.internal:5432/travel_agency_test \
+            -e DB_USERNAME=testuser -e DB_PASSWORD=testpassword \
+            -e MEDIA_DIR=/data/uploads \
+            -e BOOTSTRAP_ADMIN_PASSWORD=ci-only-throwaway-password \
+            prathibalanka-api:ci
+
+      - name: Wait for the health endpoint
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8080/actuator/health | grep -q '"status":"UP"'; then
+              echo "UP after ${i} checks"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::the container never reported UP"
+          docker logs api
+          exit 1
+
+      - name: The bootstrap admin and the catalogue work
+        run: |
+          TOKEN=$(curl -sf -X POST http://localhost:8080/api/auth/login \
+            -H 'Content-Type: application/json' \
+            -d '{"email":"prathibhalankavoyages@gmail.com","password":"ci-only-throwaway-password"}' \
+            | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+          test -n "$TOKEN" || { echo "::error::the bootstrap admin could not sign in"; docker logs api; exit 1; }
+          curl -sf http://localhost:8080/api/packages > /dev/null
+          echo "Signed in as the bootstrap admin and read the catalogue."
+
+      - name: Container log
+        if: always()
+        run: docker logs api || true

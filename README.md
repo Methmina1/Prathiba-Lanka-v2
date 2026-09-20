@@ -6,10 +6,12 @@ the public About/Contact pages.
 
 ## Stack
 
-- Java 21, Spring Boot 4.1.1 (Web MVC, Data JPA, Security, Validation, Mail)
-- PostgreSQL 15 (Docker), Hibernate `ddl-auto=update`
+- Java 21, Spring Boot 4.1.1 (Web MVC, Data JPA, Security, Validation, Mail, Actuator)
+- PostgreSQL 15 (Docker); the schema is owned by Flyway (`src/main/resources/db/migration`) and
+  Hibernate runs with `ddl-auto=validate`, so a migration that drifts from the entities fails the boot
 - JWT (JJWT 0.12.6) bearer tokens, BCrypt password hashes
 - Jackson 3 (`tools.jackson`) — Spring Boot 4 no longer uses Jackson 2 for HTTP bodies
+- Packaged as a container image (`Dockerfile`) for Railway; see [Deployment](#deployment)
 
 ## Run
 
@@ -21,32 +23,85 @@ docker compose up -d
 ./mvnw spring-boot:run
 ```
 
-Defaults match `docker-compose.yml`. Everything can be overridden with environment variables:
+## Configuration
+
+Every setting is an environment variable, and the defaults are what local development uses (they
+match `docker-compose.yml`). `application.properties` carries the reasoning next to each one.
+
+**Database**
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `DB_URL` | `jdbc:postgresql://localhost:5432/travel_agency` | JDBC URL |
 | `DB_USERNAME` / `DB_PASSWORD` | `travel_admin` / `secret` | DB credentials |
-| `JWT_SECRET` | dev placeholder | Token signing key, min 32 bytes |
+| `HIKARI_MAX_POOL_SIZE` / `HIKARI_MIN_IDLE` | `10` / `2` | Connection pool size |
+| `FLYWAY_ENABLED` | `true` | Whether migrations run at startup |
+
+**HTTP**
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PORT` | `8080` | Listen port — the platform injects this |
+| `FORWARD_HEADERS_STRATEGY` | `framework` | Trust the platform proxy's `X-Forwarded-*` headers |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:3000,http://localhost:5173` | Origins allowed to call this API, comma separated. Empty means the app refuses to start |
+
+**Secrets and first start**
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `JWT_SECRET` | dev placeholder | Token signing key, ≥32 bytes. **Has no default under the `prod` profile** |
 | `JWT_EXPIRATION_MS` | `86400000` (24 h) | Token lifetime |
+| `JWT_ISSUER` | `PrathibaLanka` | Token issuer claim |
+| `BOOTSTRAP_ADMIN_ENABLED` | `true` | Create/repair the first admin on startup |
+| `BOOTSTRAP_ADMIN_EMAIL` | `prathibhalankavoyages@gmail.com` | Bootstrap admin login |
+| `BOOTSTRAP_ADMIN_PASSWORD` | *(none)* | **Must be set** for an admin to be created; there is no default so no password is ever committed |
+| `BOOTSTRAP_ADMIN_NAME` | `Prathibha Lanka Voyages` | Display name of that account |
+| `BOOTSTRAP_ADMIN_RESET_PASSWORD` | `false` | One start that resets an existing admin's password to `BOOTSTRAP_ADMIN_PASSWORD` |
+| `BOOTSTRAP_CONTENT_ENABLED` | `true` | Seed the About/Contact pages when their rows are missing |
+
+The bootstrap admin is created only if that email does not exist, and its password is reset only
+when the stored hash is not a valid BCrypt hash. A valid password is never overwritten. Disable it
+in production and change the password after the first login.
+
+**Mail**
+
+| Variable | Default | Purpose |
+|---|---|---|
 | `MAIL_HOST` / `MAIL_PORT` | `smtp.gmail.com` / `587` | SMTP server |
 | `MAIL_USERNAME` | `prathibhalankavoyages@gmail.com` | SMTP account |
 | `MAIL_PASSWORD` | *(empty)* | **Must be set**: a Google App Password, not the account password |
 | `MAIL_SMTP_AUTH` / `MAIL_SMTP_STARTTLS` | `true` / `true` | SMTP authentication and TLS (STARTTLS is for port 587) |
 | `MAIL_FROM` / `MAIL_FROM_NAME` | `prathibhalankavoyages@gmail.com` / `PrathibaLanka` | Sender the recipient sees |
-| `BOOTSTRAP_ADMIN_ENABLED` | `true` | Create/repair the first admin on startup |
-| `BOOTSTRAP_ADMIN_EMAIL` | `admin@test.com` | Bootstrap admin login |
-| `BOOTSTRAP_ADMIN_PASSWORD` | `Admin@12345` | Bootstrap admin password |
-| `BOOTSTRAP_CONTENT_ENABLED` | `true` | Seed the About/Contact pages when their rows are missing |
-| `MEDIA_DIR` | `uploads` | Directory the uploaded files are written to |
+
+**Uploaded media**
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MEDIA_DIR` | `uploads` | Directory the uploaded files are written to. **Has no default under the `prod` profile** — point it at a mounted volume |
 | `MEDIA_URL_PREFIX` | `/media` | Public path the files are served from |
 | `MEDIA_MAX_IMAGE_BYTES` | `10485760` (10 MB) | Image upload limit |
 | `MEDIA_MAX_VIDEO_BYTES` | `62914560` (60 MB) | Video upload limit |
 | `MEDIA_MAX_UPLOAD` / `MEDIA_MAX_REQUEST` | `64MB` / `70MB` | Multipart ceiling (hard limit above the per-type ones) |
 
-The bootstrap admin is created only if that email does not exist, and its password is reset only
-when the stored hash is not a valid BCrypt hash. A valid password is never overwritten. Disable it
-in production and change the password after the first login.
+**Rate limiting** — a token bucket per client and per endpoint, on the endpoints a stranger can write
+to. Keep `numReplicas` at 1 while it is on: each instance counts in its own memory.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `RATE_LIMIT_ENABLED` | `true` | Master switch |
+| `RATE_LIMIT_PER_MINUTE` / `RATE_LIMIT_BURST` | `20` / `5` | Sustained rate and how much may arrive at once |
+| `RATE_LIMIT_PATHS` | `/api/contact,/api/auth/login,/api/auth/register` | Endpoints covered |
+
+**Health, logging**
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ACTUATOR_ENDPOINTS` | `health,info` | What is exposed under `/actuator` |
+| `ACTUATOR_HEALTH_DETAILS` | `never` | Keep datasource and disk details out of the response |
+| `HEALTH_MAIL_ENABLED` | `false` | Mail is not a health criterion (see the mail notes below) |
+| `HEALTH_CACHE` | `2s` | How long a health result is reused |
+| `LOG_LEVEL` | `INFO` under `prod` | Root log level |
+| `SQL_LOG_LEVEL` | `WARN` | Hibernate SQL logging; raise to `DEBUG` only locally |
 
 Mail goes out as the agency's Gmail account. Two things have to be right before it will send:
 
@@ -171,6 +226,68 @@ copy changes without a deployment.
 `405` wrong method · `409` duplicate or referenced record · `413` upload too large ·
 `500` unexpected (details stay in the log).
 
+## Deployment
+
+The image is self-contained and starts with `SPRING_PROFILES_ACTIVE=prod`, which is what removes the
+default JWT secret and the default media directory. Build and run it locally:
+
+```bash
+docker build -t prathibalanka-api .
+docker run -p 8080:8080 \
+  -e JWT_SECRET="$(openssl rand -base64 48)" \
+  -e DB_URL=jdbc:postgresql://host.docker.internal:5432/travel_agency \
+  -e DB_USERNAME=travel_admin -e DB_PASSWORD=secret \
+  -v prathiba-media:/data \
+  prathibalanka-api
+```
+
+### Railway
+
+Two services: this repository (the API) and the front-end repository (nginx, which also proxies
+`/api` and `/media` here). `railway.json` sets the builder, the health check and the restart policy,
+so the dashboard needs no build settings.
+
+1. **Postgres** — *New → Database → PostgreSQL*. Nothing to configure.
+2. **API service** — *New → GitHub repo → this repository*. Railway builds the `Dockerfile`.
+   Reference the database rather than copying its values, so a password change follows:
+   `DB_URL=jdbc:postgresql://${{Postgres.PGHOST}}:${{Postgres.PGPORT}}/${{Postgres.PGDATABASE}}`,
+   `DB_USERNAME=${{Postgres.PGUSER}}`, `DB_PASSWORD=${{Postgres.PGPASSWORD}}`.
+3. **Variables** — the ones without a safe default:
+
+   | Variable | Value |
+   |---|---|
+   | `JWT_SECRET` | at least 32 random bytes (`openssl rand -base64 48`). **The app refuses to boot without it** |
+   | `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` | as above |
+   | `MEDIA_DIR` | `/data/uploads` — matches the volume below |
+   | `CORS_ALLOWED_ORIGINS` | only needed if the browser calls this API directly; with the front end proxying, leave it out |
+   | `BOOTSTRAP_ADMIN_PASSWORD` | the first admin's password, for the first deploy only |
+   | `BOOTSTRAP_ADMIN_EMAIL` | `prathibhalankavoyages@gmail.com` (this is the default) |
+   | `MAIL_PASSWORD` | a Google App Password, or leave it out and no mail is sent (see below) |
+
+4. **Volume** — *Service → Variables/Volumes → New Volume*, mounted at **`/data`**. Without it every
+   uploaded photograph is deleted on the next deploy while the database still points at it.
+5. **First deploy** — the app runs `db/migration/V1__baseline.sql` on the empty database (about ten
+   seconds), creates the admin from `BOOTSTRAP_ADMIN_PASSWORD`, then reports `{"status":"UP"}` on
+   `/actuator/health`, which is what Railway's health check waits for. Set
+   `BOOTSTRAP_ADMIN_ENABLED=false` afterwards so a redeploy cannot recreate the account.
+
+Notes that come from running it this way:
+
+- **Health.** `/actuator/health` is public and answers in milliseconds; the mail health indicator is
+  switched off, because it opens an SMTP connection on every poll and would otherwise make a health
+  check wait five seconds for Gmail.
+- **Rate limits are per instance.** `numReplicas: 1` is deliberate: two instances would each allow a
+  full bucket, and media on a volume cannot be mounted into more than one anyway.
+- **The mail account is optional.** With no `MAIL_PASSWORD` the site works normally — enquiries and
+  bookings are stored, and the send failure is recorded in `email_log` with `sent=false` and the
+  reason. Gmail also has to accept a login from Railway's addresses; if it does not, the same
+  `email_log` shows `Authentication failed` rather than anything failing silently.
+- **Migrations.** The schema ships as `V1__baseline.sql`, which is the schema as it stood when Flyway
+  was introduced, so an existing database is baselined at 1 and a new one runs it. Add changes as
+  `V2__…` and never edit V1: a checksum mismatch stops the next deploy.
+- **Scaling up** means moving uploads to an object store and the rate-limit counters to something
+  shared, and putting the mail worker in one instance only.
+
 ## Tests
 
 ```bash
@@ -192,6 +309,19 @@ an 11 MB image) are written to the temp directory at run time, so the suite prov
 the signature check, the per-type size limit and the byte round trip without committing binaries.
 `mvn test` runs the context-load test.
 
+Five suites cover the project between them — 241 checks in total:
+
+| Suite | Needs | Checks |
+|---|---|---|
+| `scripts/api-tests.ps1` (this repo) | a running API | 160 — every endpoint over HTTP |
+| `mvn test` (this repo) | nothing | 6 — the Spring context, the mail configuration |
+| `npm run check:render` (front end) | nothing | 24 routes rendered in Node |
+| `npm run test:e2e` (front end) | nothing (API mocked) | 30 browser tests |
+| `npm run test:roles` (front end) | a running API + `BOOTSTRAP_ADMIN_PASSWORD` | 21 journeys through the real UI and database, one per role |
+
+The last one writes to whichever database the API points at, so run it against a development
+database. It marks everything it creates and deletes it again at the end of the run.
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every push to `main`/`updates` and on pull requests into `main`:
@@ -200,6 +330,7 @@ the signature check, the per-type size limit and the byte round trip without com
 |---|---|
 | `Compile & test` | `mvn -B -ntp clean verify` against a `postgres:15` service container; uploads surefire reports + the application jar |
 | `API endpoint tests` | boots the built jar against the same Postgres, points mail at `scripts/fake-smtp.ps1`, waits for readiness, then runs `scripts/api-tests.ps1` (159 checks) and verifies the mail sender |
+| `Docker image starts with the prod profile` | builds the image Railway runs, proves it refuses to start without `JWT_SECRET`, then starts it against Postgres and waits for `/actuator/health` to report `UP` — the same three things a deploy depends on |
 
 The last step of the second job posts a contact enquiry and asserts, from the sink's dump, that the
 configured `From` reached the wire - both as the `From:` header and as the SMTP envelope sender
@@ -235,15 +366,23 @@ handled explicitly:
 
 ## Known gaps
 
-- Schema comes from Hibernate `ddl-auto=update`; use Flyway or Liquibase before production.
-- No rate limiting on login, PIN tracking or the public contact form.
 - List endpoints return everything (`findAll`) — add pagination as data grows.
-- `spring.jpa.show-sql=true` is left on for development.
-- Tokens are stateless with no revocation or refresh.
-- Uploads go to the local disk, which does not survive a container rebuild and is not shared between
-  instances — move `app.media.dir` to an object store (S3 and the like) before scaling out.
+- Tokens are stateless with no revocation or refresh: signing out ends the session in that browser,
+  but the token itself stays valid until it expires.
+- `GET /api/bookings/track?pin=` is public and not rate limited, so PINs could be guessed in bulk.
+  It is the one write-adjacent route outside `RATE_LIMIT_PATHS`; add it there before the site is
+  busy, and consider a longer PIN.
+- Uploads live on a mounted volume, which survives a deploy but not a lost volume, and cannot be
+  shared between instances — move `app.media.dir` to an object store (S3 and the like) before
+  scaling out. Nothing takes backups of the database either; that is a Railway setting.
 - Uploaded bytes are served back as stored: no transcoding, resizing or thumbnail generation, and
-  clips are not length-checked, only size-checked.
+  clips are not length-checked, only size-checked. A 60 MB phone video therefore ships 60 MB to every
+  visitor who opens the gallery.
 - The media library is admin-only with no per-file ownership or audit trail beyond `uploaded_by`.
+- There is no error tracking. An exception that returns 500 is in the platform's log and nowhere
+  else; add Sentry (or similar) before relying on the site unattended.
+- Mail from the deployed environment has not been verified end to end: the account still needs a
+  Google App Password, and whether Gmail accepts a login from the host's addresses is something only
+  a real send will show. `email_log` records the outcome of every attempt either way.
 - Scheduled work (reminders, stale pending bookings) is not implemented yet; when it is added,
   running more than one instance needs a lock (ShedLock) so jobs do not run twice.
