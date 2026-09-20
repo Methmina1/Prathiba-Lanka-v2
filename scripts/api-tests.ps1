@@ -861,9 +861,28 @@ Test-Api -Name 'DELETE package with bookings -> 409 conflict' -Method Delete -Pa
     -Token $adminToken -Expect 409 -Check { param($r) $r.Json.error -eq 'Conflict' } -CheckDesc 'FK conflict reported as 409 (was 500)'
 
 Test-Api -Name 'DELETE unused package -> 204' -Method Delete -Path "/api/admin/packages/$smallPkgId" -Token $adminToken -Expect 204
+Test-Api -Name 'DELETE deactivated package -> 204' -Method Delete -Path "/api/admin/packages/$deadPkgId" -Token $adminToken -Expect 204
 Test-Api -Name 'DELETE /api/admin/gallery/{id} -> 204' -Method Delete -Path "/api/admin/gallery/$imgId" -Token $adminToken -Expect 204
 Test-Api -Name 'DELETE /api/admin/journal/{id} -> 204' -Method Delete -Path "/api/admin/journal/$draftId" -Token $adminToken -Expect 204
 Test-Api -Name 'DELETE general review -> 204' -Method Delete -Path "/api/admin/reviews/$generalReviewId" -Token $adminToken -Expect 204
+
+# ------------------------------------------------- what stays behind, and why
+
+# Three kinds of record this run creates have no delete route at all: an admin can confirm or reject
+# a booking, answer an enquiry and read a customer, but not remove any of them. The packages those
+# bookings point at therefore cannot be deleted either - DELETE answers 409, which is the check
+# above. Everything else the run created has just been deleted.
+#
+# Printed rather than left silent: a suite that quietly accumulates rows is a suite that eventually
+# makes the numbers on the dashboard wrong, and whoever runs this against a database that matters
+# needs to know what to tidy by hand.
+Write-Host ''
+Write-Host 'Left behind (the API has no delete for these):' -ForegroundColor Yellow
+Write-Host "  customers       $custAEmail, $custBEmail, $mixedEmail"
+Write-Host "  contact queries guest-$RunId@example.com ('Question $RunId') and $custAEmail ('Linked query')"
+Write-Host "  packages        'Updated Package $RunId' and 'Race Package $RunId' - each still has this run's bookings"
+Write-Host "  bookings        those bookings, against the two packages above"
+Write-Host '  -> run this suite against a development database.'
 
 # ---------------------------------------------------------------- summary
 

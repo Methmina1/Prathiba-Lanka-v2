@@ -285,6 +285,19 @@ Notes that come from running it this way:
 - **Migrations.** The schema ships as `V1__baseline.sql`, which is the schema as it stood when Flyway
   was introduced, so an existing database is baselined at 1 and a new one runs it. Add changes as
   `V2__…` and never edit V1: a checksum mismatch stops the next deploy.
+- **Backups are not automatic.** Railway's Postgres does not take them by itself, and a booking
+  record is the one thing here that cannot be recreated from the repository. `DATABASE_URL` is
+  provided by the Postgres service, so a dump is one command — run it on a schedule, and keep the
+  file somewhere other than this project:
+
+  ```bash
+  pg_dump "$DATABASE_URL" --format=custom --file="prathibhalanka-$(date +%F).dump"
+  pg_restore --clean --if-exists --dbname="$DATABASE_URL" prathibhalanka-2026-09-20.dump
+  ```
+
+  The custom format is a single compressed file that `pg_restore` can list and read back
+  selectively; both commands were run against a PostgreSQL 15 database before being written down
+  here.
 - **Scaling up** means moving uploads to an object store and the rate-limit counters to something
   shared, and putting the mail worker in one instance only.
 
@@ -304,16 +317,18 @@ powershell -ExecutionPolicy Bypass -File scripts/fake-smtp.ps1 -Port 2525 -Dump 
 ```
 
 `scripts/api-tests.ps1` covers every endpoint plus validation, authorization and ownership cases,
-and cleans up the data it creates. Upload fixtures (a 1×1 PNG, a WebM header, a mislabeled file and
-an 11 MB image) are written to the temp directory at run time, so the suite proves the upload path,
-the signature check, the per-type size limit and the byte round trip without committing binaries.
-`mvn test` runs the context-load test.
+and deletes every record it can. It cannot delete all of them: no route removes a booking, a customer
+or a contact query, so the packages those bookings point at stay as well — the run prints exactly
+what it left behind, and it belongs against a development database. Upload fixtures (a 1×1 PNG, a
+WebM header, a mislabeled file and an 11 MB image) are written to the temp directory at run time, so
+the suite proves the upload path, the signature check, the per-type size limit and the byte round trip
+without committing binaries. `mvn test` runs the context-load test.
 
-Five suites cover the project between them — 241 checks in total:
+Five suites cover the project between them — 242 checks in total:
 
 | Suite | Needs | Checks |
 |---|---|---|
-| `scripts/api-tests.ps1` (this repo) | a running API | 160 — every endpoint over HTTP |
+| `scripts/api-tests.ps1` (this repo) | a running API | 161 — every endpoint over HTTP |
 | `mvn test` (this repo) | nothing | 6 — the Spring context, the mail configuration |
 | `npm run check:render` (front end) | nothing | 24 routes rendered in Node |
 | `npm run test:e2e` (front end) | nothing (API mocked) | 30 browser tests |
@@ -329,7 +344,7 @@ database. It marks everything it creates and deletes it again at the end of the 
 | Job | What it does |
 |---|---|
 | `Compile & test` | `mvn -B -ntp clean verify` against a `postgres:15` service container; uploads surefire reports + the application jar |
-| `API endpoint tests` | boots the built jar against the same Postgres, points mail at `scripts/fake-smtp.ps1`, waits for readiness, then runs `scripts/api-tests.ps1` (159 checks) and verifies the mail sender |
+| `API endpoint tests` | boots the built jar against the same Postgres, points mail at `scripts/fake-smtp.ps1`, waits for readiness, then runs `scripts/api-tests.ps1` (161 checks) and verifies the mail sender |
 | `Docker image starts with the prod profile` | builds the image Railway runs, proves it refuses to start without `JWT_SECRET`, then starts it against Postgres and waits for `/actuator/health` to report `UP` — the same three things a deploy depends on |
 
 The last step of the second job posts a contact enquiry and asserts, from the sink's dump, that the
@@ -374,11 +389,17 @@ handled explicitly:
   busy, and consider a longer PIN.
 - Uploads live on a mounted volume, which survives a deploy but not a lost volume, and cannot be
   shared between instances — move `app.media.dir` to an object store (S3 and the like) before
-  scaling out. Nothing takes backups of the database either; that is a Railway setting.
+  scaling out. Nothing takes backups of the database on its own either; see
+  [Deployment](#deployment) for the one command that does.
 - Uploaded bytes are served back as stored: no transcoding, resizing or thumbnail generation, and
   clips are not length-checked, only size-checked. A 60 MB phone video therefore ships 60 MB to every
   visitor who opens the gallery.
 - The media library is admin-only with no per-file ownership or audit trail beyond `uploaded_by`.
+- Nothing can be deleted except a package, a gallery item, a story, a review and a media file: an
+  admin can confirm or reject a booking and answer an enquiry, but there is no route that removes a
+  booking, a customer or an enquiry. That is why the API test suite leaves some records behind, and
+  it is the first thing to add if the agency ever needs to honour a deletion request (or to clear
+  out spam).
 - There is no error tracking. An exception that returns 500 is in the platform's log and nowhere
   else; add Sentry (or similar) before relying on the site unattended.
 - Mail from the deployed environment has not been verified end to end: the account still needs a
