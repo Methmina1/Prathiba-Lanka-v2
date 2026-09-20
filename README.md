@@ -324,14 +324,14 @@ WebM header, a mislabeled file and an 11 MB image) are written to the temp direc
 the suite proves the upload path, the signature check, the per-type size limit and the byte round trip
 without committing binaries. `mvn test` runs the context-load test.
 
-Five suites cover the project between them — 242 checks in total:
+Five suites cover the project between them — 247 checks in total:
 
 | Suite | Needs | Checks |
 |---|---|---|
 | `scripts/api-tests.ps1` (this repo) | a running API | 161 — every endpoint over HTTP |
 | `mvn test` (this repo) | nothing | 6 — the Spring context, the mail configuration |
 | `npm run check:render` (front end) | nothing | 24 routes rendered in Node |
-| `npm run test:e2e` (front end) | nothing (API mocked) | 30 browser tests |
+| `npm run test:e2e` (front end) | nothing (API mocked) | 35 browser tests |
 | `npm run test:roles` (front end) | a running API + `BOOTSTRAP_ADMIN_PASSWORD` | 21 journeys through the real UI and database, one per role |
 
 The last one writes to whichever database the API points at, so run it against a development
