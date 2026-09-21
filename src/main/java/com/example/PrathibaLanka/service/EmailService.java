@@ -117,29 +117,66 @@ public class EmailService {
         return (replyToAddress == null || replyToAddress.isBlank()) ? null : replyToAddress.trim();
     }
 
+    /**
+     * Sent when a journey is requested, from the public form or from an account.
+     *
+     * <p>Goes to the booking's own contact address - the one typed into the form - because most
+     * requests come from people who never signed in. The PIN is in the subject as well as the body:
+     * it is the only thing they need afterwards, and a subject line is what they will find again.
+     */
     public boolean sendBookingPendingEmail(BookingRequest booking) {
-        String to = booking.getCustomer().getEmail();
-        String subject = "Your Trip Booking is Pending – PIN: " + booking.getPinCode();
-        String body = "Dear " + booking.getCustomer().getFullName() + ",\n\n"
-                + "Thank you for your booking request.\n"
-                + "Your booking is currently pending. A consultant will contact you soon.\n"
-                + "Your PIN: " + booking.getPinCode() + "\n\n"
-                + "You can track your booking using this PIN on our website.\n\n"
+        String to = booking.getContactEmail();
+        String journey = booking.getTravelPackage().getTitle();
+        String subject = "Your request is pending – " + journey + " – PIN: " + booking.getPinCode();
+        String body = "Dear " + booking.getContactName() + ",\n\n"
+                + "Thank you for your enquiry about " + journey + ".\n\n"
+                + "Your request is pending. One of our consultants will contact you shortly to go "
+                + "through the dates, the hotels and the price.\n\n"
+                + "Your tracking PIN: " + booking.getPinCode() + "\n"
+                + "Keep it: you can follow the status of this request at any time on our website, using "
+                + "the PIN tracker, without an account.\n\n"
                 + "Best regards,\nPrathibaLanka Team";
         return sendAndLog(to, subject, body, EmailType.PENDING_NOTIFICATION, booking);
     }
 
     public boolean sendBookingConfirmedEmail(BookingRequest booking) {
-        String to = booking.getCustomer().getEmail();
-        String subject = "Your Trip is Confirmed! – PIN: " + booking.getPinCode();
-        String body = "Dear " + booking.getCustomer().getFullName() + ",\n\n"
-                + "Congratulations! Your trip has been confirmed.\n"
+        String to = booking.getContactEmail();
+        String journey = booking.getTravelPackage().getTitle();
+        String subject = "Your journey is confirmed – " + journey + " – PIN: " + booking.getPinCode();
+        String body = "Dear " + booking.getContactName() + ",\n\n"
+                + "Good news - your journey is confirmed.\n\n"
+                + "Journey: " + journey + "\n"
                 + "PIN: " + booking.getPinCode() + "\n"
-                + "Confirmed Date: " + booking.getConfirmedDate() + "\n"
-                + "Total Price: $" + booking.getConfirmedPrice() + "\n\n"
-                + "We look forward to serving you.\n\n"
+                + "Confirmed date: " + booking.getConfirmedDate() + "\n"
+                + "Agreed price: $" + booking.getConfirmedPrice() + "\n\n"
+                + "We will be in touch with the documents and the meeting arrangements.\n\n"
                 + "Best regards,\nPrathibaLanka Team";
         return sendAndLog(to, subject, body, EmailType.CONFIRMATION, booking);
+    }
+
+    /**
+     * Sent when an admin cancels a request.
+     *
+     * <p>Deliberately not called "cancelled" in the subject: from the traveller's side what happened
+     * is that the request could not be confirmed, and the reason is almost always capacity - the
+     * dates are taken, or the journey is full. It says nothing has been charged (there is no payment
+     * step anywhere in this application, and a reader cannot be expected to know that) and leaves a
+     * door open, because a cancelled request is usually a date problem rather than a no.
+     */
+    public boolean sendBookingCancelledEmail(BookingRequest booking) {
+        String to = booking.getContactEmail();
+        String journey = booking.getTravelPackage().getTitle();
+        String subject = "We could not confirm your request – " + journey + " – PIN: " + booking.getPinCode();
+        String body = "Dear " + booking.getContactName() + ",\n\n"
+                + "Thank you for your enquiry about " + journey + ".\n\n"
+                + "We are sorry to say we cannot confirm this request as it stands. That usually means "
+                + "the dates are already taken, or the journey is full for that period.\n\n"
+                + "Nothing has been charged, and the request is now closed. If your dates can move, or "
+                + "you would like us to suggest something similar, reply to this email - or send a new "
+                + "request from the website - and we will find something that works.\n\n"
+                + "Your reference PIN: " + booking.getPinCode() + "\n\n"
+                + "Best regards,\nPrathibaLanka Team";
+        return sendAndLog(to, subject, body, EmailType.CANCELLATION, booking);
     }
 
     public boolean sendAutoResponse(ContactQuery query) {

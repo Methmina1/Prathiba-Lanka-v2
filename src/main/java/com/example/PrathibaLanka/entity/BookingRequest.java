@@ -20,9 +20,23 @@ public class BookingRequest {
     @Column(unique = true, nullable = false, length = 10)
     private String pinCode;
 
+    /**
+     * The account that asked for this, when there was one. A request sent from the public form has
+     * none - see {@link #contactName} - because asking for a journey does not require registering.
+     */
     @ManyToOne
-    @JoinColumn(name = "customer_id", nullable = false)
+    @JoinColumn(name = "customer_id")
     private Customer customer;
+
+    /**
+     * Who asked, and where to reply. Always filled in: from the account for a signed-in customer,
+     * from the form for everybody else, so the console always has an address to answer.
+     */
+    @Column(name = "contact_name", nullable = false, length = 100)
+    private String contactName;
+
+    @Column(name = "contact_email", nullable = false, length = 150)
+    private String contactEmail;
 
     @ManyToOne
     @JoinColumn(name = "package_id", nullable = false)

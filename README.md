@@ -245,12 +245,13 @@ Public
 | GET | `/api/content/{section}` (`about`, `contact`) |
 | GET | `/media/{file}` |
 | POST | `/api/contact` |
+| POST | `/api/bookings/request` — **no account needed**; see [Requesting a journey](#requesting-a-journey) |
+| GET | `/api/bookings/track?pin=` |
 
 Customer (bearer token, `ROLE_CUSTOMER`)
 
 | Method | Path |
 |---|---|
-| POST | `/api/bookings/request` |
 | GET | `/api/customer/bookings` |
 | POST | `/api/reviews` |
 
@@ -266,6 +267,42 @@ Admin (bearer token, `ROLE_ADMIN`)
 | DELETE | `/api/admin/packages/{id}`, `/api/admin/gallery/{id}`, `/api/admin/journal/{id}`, `/api/admin/reviews/{id}`, `/api/admin/media/{id}` |
 
 Booking status flow: `PENDING` → `CONFIRMED` or `REJECTED`; only pending bookings can be rejected.
+
+## Requesting a journey
+
+The "Request" button on a journey card opens a form with the journey already chosen
+(`/plan?package=12`). Sending it creates a **booking request**, not a checkout: a row in
+`booking_request` with status `PENDING`, a PIN, and an email to the traveller saying the request is
+pending and a consultant will be in touch.
+
+**No account is needed**, because the person filling it in is somebody browsing the site - so the
+row carries the contact details itself (`contact_name`, `contact_email`, migration V2) and
+`customer_id` is null. Nothing is invented on their behalf: creating a customer row would take their
+email address, and `customer.email` is unique, so they could not register with it afterwards. A
+request sent from a signed-in account is linked to that account instead and takes its name and email
+from it, and a guest who later registers is matched by email so their request is waiting for them.
+
+The request is protected the way the other public writes are: rate limited (see
+`app.rate-limit.paths`), and **staff are refused** — `@PreAuthorize("!hasRole('ADMIN')")` on the
+handler, because an administrator is not a customer and a booking they made would sit in the queue
+they themselves work.
+
+Every state change emails the traveller, and each attempt is recorded in `email_log`:
+
+| Change | Email | `email_type` |
+|---|---|---|
+| Request sent | "Your request is pending – {journey} – PIN: …" | `PENDING_NOTIFICATION` |
+| Admin confirms | "Your journey is confirmed – {journey} – PIN: …" with the agreed date and price | `CONFIRMATION` |
+| Admin cancels | "We could not confirm your request – {journey} – PIN: …" | `CANCELLATION` |
+
+The two admin actions are `PATCH /api/admin/bookings/{id}/confirm` (with the agreed price and date)
+and `PATCH .../reject`. The console labels that second one **Cancel** and the status **Cancelled**,
+which is the word the agency uses; the API and the database keep `REJECTED`, and the console maps
+the label (`STATUS_LABELS`) rather than the value. Cancelling asks for confirmation first: it closes
+somebody's request and emails them, and it sits next to Confirm.
+
+Everything the traveller needs is on the console's booking table and the dashboard's *Latest booking
+requests*: the PIN, their name, **their email**, the journey, the dates and the status.
 
 ## Media (images and short videos)
 

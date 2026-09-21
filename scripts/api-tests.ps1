@@ -564,8 +564,28 @@ $booking = Test-Api -Name 'POST /api/bookings/request (customer A, own id) -> 20
 $bookingId = $booking.Json.bookingId
 $bookingPin = $booking.Json.pinCode
 
-Test-Api -Name 'POST /api/bookings/request without token -> 401 (was 201!)' -Method Post -Path '/api/bookings/request' `
-    -Body @{ customerId = $custAId; packageId = $pkgId; numTravelers = 1; preferredTravelDate = '2026-12-02' } -Expect 401
+# The public form behind the "Request" button on a journey card: no token, contact details in the
+# body. It is the only write a visitor can make without an account, so it is rate limited like the
+# contact form, and a signed-in customer is linked to their account instead.
+$guest = Test-Api -Name 'POST /api/bookings/request without a token (a guest) -> 201' -Method Post -Path '/api/bookings/request' `
+    -Body @{ packageId = $pkgId; numTravelers = 1; preferredTravelDate = '2026-12-02'; `
+             contactName = "Guest $RunId"; contactEmail = "guest-booking-$RunId@example.com" } `
+    -Expect 201 `
+    -Check { param($r) $r.Json.status -eq 'PENDING' -and $r.Json.pinCode.Length -eq 8 -and $r.Json.customerEmail -like 'guest-booking-*' } `
+    -CheckDesc 'PENDING booking with a PIN, no account needed' -Capture
+$guestBookingId = $guest.Json.bookingId
+$guestPin = $guest.Json.pinCode
+
+Test-Api -Name 'POST guest booking with no name or email -> 400' -Method Post -Path '/api/bookings/request' `
+    -Body @{ packageId = $pkgId; numTravelers = 1; preferredTravelDate = '2026-12-02' } -Expect 400 `
+    -Check { param($r) $r.Json.message -like '*name and an email*' } -CheckDesc 'asks for a way to reply'
+Test-Api -Name 'POST guest booking claiming a customerId -> 403' -Method Post -Path '/api/bookings/request' `
+    -Body @{ customerId = $custAId; packageId = $pkgId; numTravelers = 1; preferredTravelDate = '2026-12-02'; `
+             contactName = 'Impersonator'; contactEmail = 'nobody@example.com' } -Expect 403 `
+    -Check { param($r) $r.Json.error -eq 'Forbidden' } -CheckDesc 'a guest cannot book on an account'
+Test-Api -Name 'GET /api/bookings/track?pin={guest pin} (public, no account)' -Method Get -Path "/api/bookings/track?pin=$guestPin" -Expect 200 `
+    -Check { param($r) $r.Json.bookingId -eq $guestBookingId } -CheckDesc 'the guest tracks it with the PIN'
+
 Test-Api -Name 'POST booking for ANOTHER customer -> 403 (was 201!)' -Method Post -Path '/api/bookings/request' `
     -Token $custBToken `
     -Body @{ customerId = $custAId; packageId = $pkgId; numTravelers = 1; preferredTravelDate = '2026-12-02' } -Expect 403 `

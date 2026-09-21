@@ -1,5 +1,6 @@
 package com.example.PrathibaLanka.service;
 
+import com.example.PrathibaLanka.event.BookingCancelledEvent;
 import com.example.PrathibaLanka.event.BookingConfirmedEvent;
 import com.example.PrathibaLanka.event.BookingCreatedEvent;
 import com.example.PrathibaLanka.event.QuerySubmittedEvent;
@@ -48,6 +49,15 @@ public class MailNotificationListener {
         bookingRepo.findById(event.bookingId()).ifPresentOrElse(
                 emailService::sendBookingConfirmedEmail,
                 () -> log.warn("Booking {} disappeared before its confirmation mail was sent", event.bookingId()));
+    }
+
+    @Async("mailExecutor")
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onBookingCancelled(BookingCancelledEvent event) {
+        bookingRepo.findById(event.bookingId()).ifPresentOrElse(
+                emailService::sendBookingCancelledEmail,
+                () -> log.warn("Booking {} disappeared before its cancellation mail was sent", event.bookingId()));
     }
 
     @Async("mailExecutor")

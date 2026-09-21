@@ -83,6 +83,10 @@ public class SecurityConfig {
                         // it. GET and HEAD are the same read, so they get the same answer.
                         .requestMatchers(HttpMethod.HEAD, "/media/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/contact").permitAll()
+                        // Requesting a journey is the button on a journey card: a visitor with an
+                        // email address, not a registered customer, and they need a PIN back. Staff
+                        // are kept out by @PreAuthorize on the handler itself.
+                        .requestMatchers(HttpMethod.POST, "/api/bookings/request").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/bookings/track").permitAll()
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .anyRequest().authenticated()

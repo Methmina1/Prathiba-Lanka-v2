@@ -1,7 +1,9 @@
 package com.example.PrathibaLanka.dto.request;
 
+import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.time.LocalDate;
@@ -23,4 +25,20 @@ public class BookingRequestDTO {
     private LocalDate preferredTravelDate;
 
     private String specialRequests;
+
+    /**
+     * Who is asking, and where a reply should go.
+     *
+     * <p>Required for a request sent from the public form, which is how most of them arrive: the
+     * person browsing the site has no account. When the request carries a customer token these are
+     * filled in from the account instead and whatever the body says is ignored, so a signed-in
+     * customer cannot make a booking look like it came from somebody else. The service decides which,
+     * because "required unless authenticated" is not something a field annotation can express.
+     */
+    @Size(max = 100, message = "Name must be at most 100 characters")
+    private String contactName;
+
+    @Email(message = "Email must be well-formed")
+    @Size(max = 150, message = "Email must be at most 150 characters")
+    private String contactEmail;
 }
