@@ -8,6 +8,13 @@
   },
   "cards": [
     {
+      "icon": "whatsapp",
+      "label": "WhatsApp",
+      "value": "+94 76 048 4088",
+      "href": "https://wa.me/94760484088",
+      "note": "Fastest way to reach us"
+    },
+    {
       "icon": "mail",
       "label": "Email",
       "value": "prathibhalankavoyages@gmail.com",
