@@ -3,6 +3,7 @@ package com.example.PrathibaLanka.service;
 import com.example.PrathibaLanka.entity.BookingRequest;
 import com.example.PrathibaLanka.entity.ContactQuery;
 import com.example.PrathibaLanka.entity.EmailLog;
+import com.example.PrathibaLanka.entity.QueryMessage;
 import com.example.PrathibaLanka.enums.EmailType;
 import com.example.PrathibaLanka.repository.EmailLogRepository;
 import com.example.PrathibaLanka.service.mail.MailTransport;
@@ -52,6 +53,16 @@ public class EmailService {
     @Value("${app.mail.reply-to:}")
     private String replyToAddress;
 
+    /**
+     * The public site, used to build the links that go in an email.
+     *
+     * <p>It cannot be derived from the request: mail is composed on a worker thread after the response
+     * has gone, and the API's own origin is not where the customer reads their enquiry. Set
+     * APP_PUBLIC_URL to the deployed front end.
+     */
+    @Value("${app.public-url:http://localhost:5173}")
+    private String publicUrl;
+
     /** One line at startup saying how mail leaves this instance, so a deployment is not a guess. */
     @PostConstruct
     void announceTransport() {
@@ -65,6 +76,7 @@ public class EmailService {
         if (replyToAddress != null && !replyToAddress.isBlank()) {
             log.info("Replies are directed to {}", replyToAddress);
         }
+        log.info("Links in outgoing mail point at {}", publicUrl);
     }
 
     /**
@@ -74,6 +86,19 @@ public class EmailService {
      * @return true only if the mail server accepted the message
      */
     private boolean sendAndLog(String to, String subject, String body, EmailType type, BookingRequest booking) {
+        return sendAndLog(to, subject, body, type, booking, replyTo());
+    }
+
+    /**
+     * The same, with an explicit reply-to.
+     *
+     * <p>The notification that tells the agency "the customer wrote again" is sent <em>to</em> the
+     * agency, so it must not carry the agency's own address as its reply-to: whoever answers it would
+     * be writing to themselves. That one is addressed back to the customer, which is what lets the
+     * person in Gmail hit reply and reach the person who wrote in.
+     */
+    private boolean sendAndLog(String to, String subject, String body, EmailType type, BookingRequest booking,
+                               String replyToHeader) {
         boolean sent = false;
         String failureReason = null;
 
@@ -81,7 +106,7 @@ public class EmailService {
 
         if (transport != null) {
             try {
-                transport.send(new OutboundMail(fromAddress, fromName, to, replyTo(), subject, body));
+                transport.send(new OutboundMail(fromAddress, fromName, to, replyToHeader, subject, body));
                 sent = true;
                 log.info("Email sent to {} | Subject: {}", to, subject);
             } catch (Exception e) {
@@ -181,12 +206,116 @@ public class EmailService {
 
     public boolean sendAutoResponse(ContactQuery query) {
         String to = query.getEmail();
-        String subject = "We received your message – PrathibaLanka";
+        // The reference in the subject, not only in the body: it is what lets whoever reads the inbox
+        // match a thread to the row in the console a week later, and it is how the two "Re:" mails that
+        // follow are recognised as belonging to the same enquiry.
+        String subject = "[" + reference(query) + "] We received your message – PrathibaLanka";
         String body = "Dear " + query.getName() + ",\n\n"
                 + "Thank you for contacting us.\n"
                 + "We have received your message and will get back to you as soon as possible.\n\n"
-                + "Your query reference: " + query.getQueryId() + "\n\n"
+                + "Your enquiry reference: " + reference(query) + "\n"
+                + enquiryLinkNote(query, "You can read our answer, and write back to us, at any time:")
                 + "Best regards,\nPrathibaLanka Team";
         return sendAndLog(to, subject, body, EmailType.AUTO_RESPONSE, null);
+    }
+
+    /**
+     * The agency's reply to an enquiry, sent to the customer.
+     *
+     * <p>This is the message that used to be written into the database and never sent. The subject
+     * keeps the reference and the original subject so the customer's mail client threads it, the
+     * customer's own message is quoted underneath so they do not have to remember what they asked, and
+     * the link back to their page is what lets them answer without an account.
+     */
+    public boolean sendQueryReplyEmail(ContactQuery query, QueryMessage reply) {
+        String to = query.getEmail();
+        String subject = "Re: [" + reference(query) + "] " + query.getSubject();
+        String body = "Dear " + query.getName() + ",\n\n"
+                + answerOf(reply) + "\n\n"
+                + "---\n"
+                + "Your message, for reference:\n"
+                + quote(query.getMessage()) + "\n"
+                + "Your enquiry reference: " + reference(query) + "\n"
+                + enquiryLinkNote(query, "You can read this answer on our site, and write back to us, at:")
+                + "Best regards,\nPrathibaLanka Team";
+        return sendAndLog(to, subject, body, EmailType.QUERY_RESPONSE, null);
+    }
+
+    /**
+     * "The customer wrote again", sent to the inbox the agency answers from.
+     *
+     * <p>Its reply-to is the customer, not the agency: the point of this mail is that whoever reads it
+     * in Gmail can hit reply and reach the person who wrote in, without opening the console first. The
+     * message is on the enquiry either way, so nothing is lost if it is filtered as noise.
+     *
+     * @return false when no agency address is configured, in which case nothing is sent or logged -
+     *         email_log.recipient_email cannot hold a blank, and the message is recorded regardless
+     */
+    public boolean sendQueryMessageToAgency(ContactQuery query, QueryMessage message) {
+        String to = replyTo();
+        if (to == null) {
+            log.warn("No agency inbox is configured (app.mail.reply-to), so the message on enquiry {} "
+                    + "was recorded without a notification.", query.getQueryId());
+            return false;
+        }
+
+        String subject = "[" + reference(query) + "] " + query.getName() + " wrote again: " + query.getSubject();
+        String body = query.getName() + " (" + query.getEmail() + ") added a message to their enquiry.\n\n"
+                + answerOf(message) + "\n\n"
+                + "---\n"
+                + "The enquiry, as it stands:\n"
+                + "From: " + query.getName() + " <" + query.getEmail() + ">"
+                + (query.getPhone() == null || query.getPhone().isBlank() ? "" : "  " + query.getPhone()) + "\n"
+                + "Reference: " + reference(query) + "\n"
+                + "Received: " + query.getSubmittedAt() + "\n\n"
+                + quote(query.getMessage()) + "\n"
+                + "Reply to this email to answer " + query.getName() + " directly, or record it in the "
+                + "console at " + consoleLink() + " so the enquiry reads complete.\n";
+        return sendAndLog(to, subject, body, EmailType.QUERY_MESSAGE, null, query.getEmail());
+    }
+
+    /** "#44" - the reference staff and customers quote at each other. */
+    private String reference(ContactQuery query) {
+        return "#" + query.getQueryId();
+    }
+
+    /** The customer's own page, when the enquiry has a token to open it with. */
+    private String enquiryLink(ContactQuery query) {
+        if (query.getAccessToken() == null || query.getAccessToken().isBlank()) {
+            return null;
+        }
+        String base = (publicUrl == null || publicUrl.isBlank()) ? "" : publicUrl.trim().replaceAll("/+$", "");
+        return base + "/enquiry/" + query.getAccessToken();
+    }
+
+    /** The "you can read it here" line, or nothing at all when there is no link to offer. */
+    private String enquiryLinkNote(ContactQuery query, String lead) {
+        String link = enquiryLink(query);
+        return link == null ? "" : lead + "\n" + link + "\n\n";
+    }
+
+    private String consoleLink() {
+        String base = (publicUrl == null || publicUrl.isBlank()) ? "" : publicUrl.trim().replaceAll("/+$", "");
+        return base + "/admin/queries";
+    }
+
+    /** A recorded reply with no copy kept still has to read as a sentence. */
+    private String answerOf(QueryMessage message) {
+        if (message == null || message.getBody() == null || message.getBody().isBlank()) {
+            return "(No copy of this reply was kept.)";
+        }
+        return message.getBody().trim();
+    }
+
+    /** Quotes a message back with "> " on every line, so nested quoting stays readable. */
+    private String quote(String text) {
+        if (text == null || text.isBlank()) {
+            return "> (nothing kept)\n";
+        }
+        StringBuilder quoted = new StringBuilder();
+        for (String line : text.trim().split("\\R")) {
+            quoted.append("> ").append(line).append('\n');
+        }
+        return quoted.toString();
     }
 }

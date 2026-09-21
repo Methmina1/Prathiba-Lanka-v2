@@ -83,6 +83,13 @@ public class SecurityConfig {
                         // it. GET and HEAD are the same read, so they get the same answer.
                         .requestMatchers(HttpMethod.HEAD, "/media/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/contact").permitAll()
+                        // The customer's own enquiry, opened with the token from their acknowledgement
+                        // email. No account, no login: the token is the credential, which is the same
+                        // trade the booking PIN makes.
+                        .requestMatchers(HttpMethod.GET, "/api/enquiries/**").permitAll()
+                        // Writing back on it is public too, and rate limited like the other endpoint a
+                        // stranger can write to (see app.rate-limit.paths).
+                        .requestMatchers(HttpMethod.POST, "/api/enquiries/**").permitAll()
                         // Requesting a journey is the button on a journey card: a visitor with an
                         // email address, not a registered customer, and they need a PIN back. Staff
                         // are kept out by @PreAuthorize on the handler itself.

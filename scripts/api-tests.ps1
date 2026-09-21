@@ -542,14 +542,94 @@ Test-Api -Name 'GET /api/admin/queries (customer token) -> 403' -Method Get -Pat
 $responded = Test-Api -Name 'PATCH /api/admin/queries/{id}/respond (admin)' -Method Patch `
     -Path "/api/admin/queries/$queryId/respond" -Token $adminToken -Expect 200 `
     -Body @{ adminResponse = 'Yes, December is available.' } `
-    -Check { param($r) $r.Json.status -eq 'RESPONDED' -and $r.Json.adminResponse -and $r.Json.respondedByName } `
-    -CheckDesc 'response + responder recorded' -Capture
+    -Check { param($r) $r.Json.status -eq 'RESPONDED' -and $r.Json.adminResponse -and $r.Json.respondedByName `
+             -and @($r.Json.messages).Count -eq 1 -and $r.Json.messages[0].direction -eq 'AGENCY' `
+             -and $r.Json.replySent -eq $false -and $r.Json.messages[0].emailed -eq $false } `
+    -CheckDesc 'reply stored on the thread, not sent yet' -Capture
+$queryToken = ($responded.Json.enquiryUrl -replace '^/enquiry/', '')
+
+# The customer has to actually receive it, which is what this flag records. It is written by the mail
+# worker after the response, from what the transport said - see MailNotificationListener.
+Test-Condition -Name 'async mail: reply_sent flips to true once the reply is away' -TimeoutSeconds 20 `
+    -CheckDesc 'mail worker sent the reply' -Check {
+    $r = Invoke-Api -Method Get -Path '/api/admin/queries' -Token $adminToken
+    $row = $r.Json | Where-Object { $_.queryId -eq $queryId }
+    $row.replySent -eq $true -and $row.messages[0].emailed -eq $true
+}
+
 Test-Api -Name 'PATCH respond twice -> 400' -Method Patch -Path "/api/admin/queries/$queryId/respond" `
     -Token $adminToken -Expect 400 -Body @{ adminResponse = 'again' }
 Test-Api -Name 'PATCH respond to unknown query -> 404' -Method Patch -Path '/api/admin/queries/999999/respond' `
     -Token $adminToken -Expect 404 -Body @{ adminResponse = 'x' }
 Test-Api -Name 'PATCH respond with blank text -> 400' -Method Patch -Path '/api/admin/queries/999999/respond' `
     -Token $adminToken -Expect 400 -Body @{ adminResponse = '' }
+Test-Api -Name 'PATCH respond with an over-long reply -> 400' -Method Patch -Path "/api/admin/queries/$queryId/respond" `
+    -Token $adminToken -Expect 400 -Body @{ adminResponse = ('x' * 5001) }
+
+# ---------------------------------------------------------------- the customer's own page
+#
+# A general enquiry used to be a one-way note: the acknowledgement quoted a reference that no page in
+# the application accepted. The token in that email now opens the enquiry, and the customer can write
+# back on it without an account - the same trade the booking PIN makes.
+
+Test-Api -Name 'GET /api/enquiries/{token} (public)' -Method Get -Path "/api/enquiries/$queryToken" -Expect 200 `
+    -Check { param($r) $r.Json.queryId -eq $queryId -and $r.Json.awaitingReply -eq $false `
+             -and @($r.Json.messages).Count -eq 1 } `
+    -CheckDesc 'the customer can read their answer'
+Test-Api -Name 'GET the customer view leaks no contact details' -Method Get -Path "/api/enquiries/$queryToken" `
+    -Expect 200 -Check { param($r) -not $r.Json.email -and -not $r.Json.phone -and -not $r.Json.respondedByName } `
+    -CheckDesc 'no email, phone or staff name in the public view'
+Test-Api -Name 'GET /api/enquiries with an unknown token -> 404' -Method Get -Path '/api/enquiries/not-a-real-token' -Expect 404
+
+Test-Api -Name 'POST /api/enquiries/{token}/messages (public)' -Method Post `
+    -Path "/api/enquiries/$queryToken/messages" -Expect 201 `
+    -Body @{ message = 'Could you also quote for four people?' } `
+    -Check { param($r) $r.Json.awaitingReply -eq $true `
+             -and @($r.Json.messages | Where-Object { $_.direction -eq 'CUSTOMER' }).Count -eq 1 } `
+    -CheckDesc 'their follow-up is waiting for an answer' -Capture
+
+Test-Api -Name 'POST an empty message -> 400' -Method Post -Path "/api/enquiries/$queryToken/messages" `
+    -Expect 400 -Body @{ message = '   ' }
+Test-Api -Name 'POST to an unknown token -> 404' -Method Post -Path '/api/enquiries/not-a-real-token/messages' `
+    -Expect 404 -Body @{ message = 'hello' }
+
+# Writing again puts the enquiry back in front of staff, which is the point of the waiting list.
+Test-Api -Name 'GET /api/admin/queries?onlyNew=true lists it again' -Method Get `
+    -Path '/api/admin/queries?onlyNew=true' -Token $adminToken -Expect 200 `
+    -Check { param($r) $r.Json.queryId -contains $queryId } -CheckDesc 'the follow-up is back on the list'
+
+$secondReply = Test-Api -Name 'PATCH respond again after a follow-up -> 200' -Method Patch `
+    -Path "/api/admin/queries/$queryId/respond" -Token $adminToken -Expect 200 `
+    -Body @{ adminResponse = 'Four people, same dates - a quote is on its way.' } `
+    -Check { param($r) @($r.Json.messages).Count -eq 3 `
+             -and $r.Json.adminResponse -eq 'Four people, same dates - a quote is on its way.' } `
+    -CheckDesc 'both answers are on the thread' -Capture
+
+Test-Condition -Name 'async mail: the second reply is sent as well' -TimeoutSeconds 20 `
+    -CheckDesc 'the customer heard back twice' -Check {
+    $r = Invoke-Api -Method Get -Path '/api/admin/queries' -Token $adminToken
+    ($r.Json | Where-Object { $_.queryId -eq $queryId }).replySent -eq $true
+}
+
+# ---------------------------------------------------------------- answered from the agency's inbox
+#
+# The way the details usually get agreed. It has to be recordable without pretending a mail went out,
+# and it has to be told apart from a reply that failed to send.
+
+$outside = Test-Api -Name 'POST answered-outside (admin)' -Method Post `
+    -Path "/api/admin/queries/$queryId/answered-outside" -Token $adminToken -Expect 200 `
+    -Body @{ note = 'Rang them back about the airport transfer.' } `
+    -Check { param($r) $r.Json.answeredOutside -eq $true -and $r.Json.replySent -eq $false `
+             -and @($r.Json.messages).Count -eq 4 -and $r.Json.messages[3].emailed -eq $false } `
+    -CheckDesc 'recorded as answered, with no mail claimed' -Capture
+Test-Api -Name 'POST answered-outside twice -> 400' -Method Post `
+    -Path "/api/admin/queries/$queryId/answered-outside" -Token $adminToken -Expect 400 -Body @{ note = 'again' }
+Test-Api -Name 'POST answered-outside to an unknown query -> 404' -Method Post `
+    -Path '/api/admin/queries/999999/answered-outside' -Token $adminToken -Expect 404 -Body @{ note = 'x' }
+Test-Api -Name 'POST answered-outside without a token -> 401' -Method Post `
+    -Path "/api/admin/queries/$queryId/answered-outside" -Expect 401 -Body @{ note = 'x' }
+Test-Api -Name 'POST answered-outside as a customer -> 403' -Method Post `
+    -Path "/api/admin/queries/$queryId/answered-outside" -Token $custAToken -Expect 403 -Body @{ note = 'x' }
 
 # ---------------------------------------------------------------- 7. bookings
 

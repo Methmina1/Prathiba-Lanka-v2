@@ -78,6 +78,12 @@ in production and change the password after the first login.
 | `MAIL_PASSWORD` | *(empty)* | **Must be set**: a Google App Password, not the account password |
 | `MAIL_SMTP_AUTH` / `MAIL_SMTP_STARTTLS` | `true` / `true` | SMTP authentication and TLS (STARTTLS is for port 587) |
 
+**Links in outgoing mail**
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `APP_PUBLIC_URL` | `http://localhost:5173` | The public site, used to build the links that go in an email: the customer's own enquiry page and the console address in the note that says somebody wrote in. Set it to the deployed front end, or the mails arrive with links only a developer can open |
+
 **Uploaded media**
 
 | Variable | Default | Purpose |
@@ -95,7 +101,7 @@ to. Keep `numReplicas` at 1 while it is on: each instance counts in its own memo
 |---|---|---|
 | `RATE_LIMIT_ENABLED` | `true` | Master switch |
 | `RATE_LIMIT_PER_MINUTE` / `RATE_LIMIT_BURST` | `20` / `5` | Sustained rate and how much may arrive at once |
-| `RATE_LIMIT_PATHS` | `/api/contact,/api/auth/login,/api/auth/register` | Endpoints covered |
+| `RATE_LIMIT_PATHS` | `/api/contact,POST /api/enquiries,/api/bookings/request,/api/auth/login,/api/auth/register` | Endpoints covered. An entry is a path prefix, or `METHOD /prefix` to limit one method only — the customer's enquiry page is a read *and* a write, and refreshing your own enquiry should not answer "too many requests" |
 
 **Health, logging**
 
@@ -205,7 +211,25 @@ curl -s -H "Authorization: Bearer $BIRD_API_KEY" \
 ```
 
 `scripts/api-tests.ps1` posts an enquiry and asserts `autoResponseSent` flips to true, which is the
-whole path: request → queue → transport → `email_log`.
+whole path: request → queue → transport → `email_log`. `scripts/verify-mail.ps1` goes further and reads
+what the mail server was actually handed: the acknowledgement, the console's reply with its reference in
+the subject, the link inside it opening that customer's own enquiry, and the note telling the agency the
+customer wrote again.
+
+Six kinds of mail are sent, and each is stored in `email_log` as it goes:
+
+| `EMAIL_TYPE` | Goes to | Sent when |
+|---|---|---|
+| `AUTO_RESPONSE` | the customer | an enquiry arrives |
+| `PENDING_NOTIFICATION` | the customer | a journey is requested (carries the PIN) |
+| `CONFIRMATION` | the customer | an admin confirms the request |
+| `CANCELLATION` | the customer | an admin cancels the request |
+| `QUERY_RESPONSE` | the customer | an admin answers an enquiry from the console |
+| `QUERY_MESSAGE` | the agency inbox | a customer writes again on their enquiry |
+
+`email_log.email_type` is guarded by a check constraint, so a new type needs a migration: the message is
+sent *before* the row is written, and a refused insert means the mail went out and the audit trail
+silently lost it. `V3` (cancellation) and `V4` (the two enquiry types) both exist for that reason.
 
 ### SMTP (`MAIL_TRANSPORT=smtp`)
 
@@ -247,6 +271,8 @@ Public
 | POST | `/api/contact` |
 | POST | `/api/bookings/request` — **no account needed**; see [Requesting a journey](#requesting-a-journey) |
 | GET | `/api/bookings/track?pin=` |
+| GET | `/api/enquiries/{token}` — the customer's own enquiry; the token is the credential |
+| POST | `/api/enquiries/{token}/messages` — they write again; rate limited |
 
 Customer (bearer token, `ROLE_CUSTOMER`)
 
@@ -262,11 +288,52 @@ Admin (bearer token, `ROLE_ADMIN`)
 | GET | `/api/admin/packages`, `/api/admin/bookings?status=`, `/api/admin/queries?onlyNew=`, `/api/admin/journal`, `/api/admin/journal/{id}` |
 | GET | `/api/admin/media?type=`, `/api/admin/media/limits`, `/api/admin/content` |
 | POST | `/api/admin/packages`, `/api/admin/gallery`, `/api/admin/journal`, `/api/admin/media` (multipart) |
+| POST | `/api/admin/queries/{id}/answered-outside` — recorded as answered, nothing emailed |
 | PUT | `/api/admin/packages/{id}`, `/api/admin/gallery/{id}`, `/api/admin/journal/{id}`, `/api/admin/content/{section}` |
 | PATCH | `/api/admin/packages/{id}/deactivate`, `/api/admin/bookings/{id}/confirm`, `/api/admin/bookings/{id}/reject`, `/api/admin/queries/{id}/respond`, `/api/admin/journal/{id}/publish`, `/api/admin/journal/{id}/unpublish` |
 | DELETE | `/api/admin/packages/{id}`, `/api/admin/gallery/{id}`, `/api/admin/journal/{id}`, `/api/admin/reviews/{id}`, `/api/admin/media/{id}` |
 
 Booking status flow: `PENDING` → `CONFIRMED` or `REJECTED`; only pending bookings can be rejected.
+
+Enquiry status flow: `NEW` (needs a reply) → `RESPONDED` (answered), and back to `NEW` when the customer
+writes again. `PATCH /api/admin/queries/{id}/respond` sends the reply to the customer by email.
+
+## Enquiries, and the conversation that follows them
+
+Two kinds of enquiry arrive, and they are answered differently:
+
+| | General enquiry | About a package |
+|---|---|---|
+| Comes from | the contact form (also on `/plan`) | the Request button on a journey card |
+| Stored as | `contact_query` | `booking_request`, with a PIN and a status |
+| Status | `NEW` → `RESPONDED` | `PENDING` → `CONFIRMED` / `REJECTED` |
+| Automated mail | acknowledgement with the reference | acknowledgement, confirmation, cancellation |
+| Customer's own view | `/enquiry/{access_token}` — opened from the link in the acknowledgement | the PIN tracker |
+
+The model this implements is deliberately half-automated, because that is how the agency works: **the
+state changes are automated and the discussion is not.** Confirmations, cancellations and
+acknowledgements are templates this application sends; everything else is a person writing from the
+agency's own inbox, which is where `MAIL_REPLY_TO` points and why every message carries it as its
+`Reply-To`. What the application does is carry the messages that matter, and keep the record:
+
+- **`query_message`** is the thread — one row per message, `CUSTOMER` or `AGENCY`. An `AGENCY` message
+  with `emailed = true` is one this application sent; `emailed = false` means somebody wrote from Gmail
+  and (if they kept a copy) recorded it here. Both are normal, and the console shows which is which.
+- **`contact_query.reply_sent`** records whether the reply the console composed actually reached the
+  customer, written by the mail worker from what the transport said — never from what the request hoped.
+  `answered_outside` is the third outcome: the agency answered from its own inbox, which is recorded
+  rather than treated as a failure.
+- **`contact_query.access_token`** is 128 random bits, not the query id: `/api/enquiries/{token}` is
+  public, and a sequential id would let anybody read anybody's enquiry by counting upwards. The id stays
+  the human-readable reference (`#44`), which is what goes in the subject lines of every message so a
+  Gmail thread can be matched to a row in the console.
+- When a customer writes again the enquiry returns to `NEW` and the agency inbox is told, with the
+  **customer** as that notification's reply-to — so whoever reads it in Gmail can hit reply and reach
+  the person who wrote in, without opening the console first.
+
+Links in outgoing mail are built from `APP_PUBLIC_URL` (see [Configuration](#configuration)); that is
+why a deployment must set it.
+
 
 ## Requesting a journey
 
@@ -397,6 +464,7 @@ so the dashboard needs no build settings.
    | `BIRD_API_KEY` | the key from Bird's dashboard. **Set this, or every send is recorded in `email_log` as a failure** |
    | `MAIL_FROM` | `bookings@mail.prathibalanka.com` |
    | `MAIL_REPLY_TO` | `prathibhalankavoyages@gmail.com` — replies go to the inbox the agency reads. Moving this to `bookings@mail.prathibalanka.com` is a one-variable change, but only worth making once the inbound MX records are published and Bird is routing that mail somewhere |
+   | `APP_PUBLIC_URL` | `https://prathibalanka.com` — the front end's address, used to build the links inside outgoing mail (the customer's own enquiry page, and the console link in the "somebody wrote in" note). Left at the default, those links point at a laptop |
    | `CORS_ALLOWED_ORIGINS` | only needed if the browser calls this API directly; with the front end proxying, leave it out |
    | `BOOTSTRAP_ADMIN_PASSWORD` | the first admin's password, for the first deploy only |
    | `BOOTSTRAP_ADMIN_EMAIL` | `prathibhalankavoyages@gmail.com` (this is the default) |
@@ -451,6 +519,10 @@ powershell -ExecutionPolicy Bypass -File scripts/fake-smtp.ps1 -Port 2525
 
 # the same sink can record what the app sent, headers included, for inspecting the sender:
 powershell -ExecutionPolicy Bypass -File scripts/fake-smtp.ps1 -Port 2525 -Dump smtp-dump.txt
+
+# then prove the mail really goes out: acknowledgement, the console's reply, the link inside it, and the
+# note back to the agency when the customer writes again (16 checks; needs BOOTSTRAP_ADMIN_PASSWORD)
+powershell -ExecutionPolicy Bypass -File scripts/verify-mail.ps1 -BaseUrl http://localhost:8080
 ```
 
 `scripts/api-tests.ps1` covers every endpoint plus validation, authorization and ownership cases,
@@ -459,17 +531,22 @@ or a contact query, so the packages those bookings point at stay as well — the
 what it left behind, and it belongs against a development database. Upload fixtures (a 1×1 PNG, a
 WebM header, a mislabeled file and an 11 MB image) are written to the temp directory at run time, so
 the suite proves the upload path, the signature check, the per-type size limit and the byte round trip
-without committing binaries. `mvn test` runs the context-load test.
+without committing binaries. `mvn test` runs the context-load test and the mail-transport tests.
 
-Five suites cover the project between them — 249 checks in total:
+`scripts/verify-mail.ps1` is the one suite that reads the wire rather than the API, which is the only way
+to catch the class of bug this project has actually shipped: a reply that was stored, reported as saved,
+and never sent. It needs a running instance pointed at `scripts/fake-smtp.ps1 -Dump`.
+
+Six suites cover the project between them — 309 checks in total:
 
 | Suite | Needs | Checks |
 |---|---|---|
-| `scripts/api-tests.ps1` (this repo) | a running API | 161 — every endpoint over HTTP |
-| `mvn test` (this repo) | nothing | 6 — the Spring context, the mail configuration |
-| `npm run check:render` (front end) | nothing | 24 routes rendered in Node |
-| `npm run test:e2e` (front end) | nothing (API mocked) | 37 browser tests |
-| `npm run test:roles` (front end) | a running API + `BOOTSTRAP_ADMIN_PASSWORD` | 21 journeys through the real UI and database, one per role |
+| `scripts/api-tests.ps1` (this repo) | a running API | 180 — every endpoint over HTTP |
+| `scripts/verify-mail.ps1` (this repo) | a running API + the SMTP sink | 16 — what the mail server was handed |
+| `mvn test` (this repo) | nothing | 23 — the Spring context, the mail transports |
+| `npm run check:render` (front end) | nothing | 25 routes rendered in Node |
+| `npm run test:e2e` (front end) | nothing (API mocked) | 43 browser tests |
+| `npm run test:roles` (front end) | a running API + `BOOTSTRAP_ADMIN_PASSWORD` | 22 journeys through the real UI and database, one per role |
 
 The last one writes to whichever database the API points at, so run it against a development
 database. It marks everything it creates and deletes it again at the end of the run.
@@ -481,13 +558,16 @@ database. It marks everything it creates and deletes it again at the end of the 
 | Job | What it does |
 |---|---|
 | `Compile & test` | `mvn -B -ntp clean verify` against a `postgres:15` service container; uploads surefire reports + the application jar |
-| `API endpoint tests` | boots the built jar against the same Postgres, points mail at `scripts/fake-smtp.ps1`, waits for readiness, then runs `scripts/api-tests.ps1` (161 checks) and verifies the mail sender |
+| `API endpoint tests` | boots the built jar against the same Postgres, points mail at `scripts/fake-smtp.ps1`, waits for readiness, then runs `scripts/api-tests.ps1` (180 checks) and `scripts/verify-mail.ps1` (16 checks) |
 | `Docker image starts with the prod profile` | builds the image Railway runs, proves it refuses to start without `JWT_SECRET`, then starts it against Postgres and waits for `/actuator/health` to report `UP` — the same three things a deploy depends on |
 
-The last step of the second job posts a contact enquiry and asserts, from the sink's dump, that the
-configured `From` reached the wire - both as the `From:` header and as the SMTP envelope sender
-(`MAIL FROM:`), because providers reject a message without a sender and SPF aligns on the envelope.
-Set `MAIL_FROM` / `MAIL_FROM_NAME` in that job's `env:` to change what it checks for.
+The last step of the second job reads the sink's dump rather than the API, because the failures this
+catches are invisible from the API. It checks the configured `From` on both the `From:` header and the
+SMTP envelope (`MAIL FROM:`) — providers reject a message without a sender and SPF aligns on the
+envelope — and then walks the whole enquiry conversation: a reply stored in the console, mailed to the
+person who asked, carrying the enquiry reference in its subject, and holding a link that opens that
+customer's own enquiry. Set `MAIL_FROM` / `MAIL_FROM_NAME` in that job's `env:` to change what it
+checks for.
 
 Branch protection on `main` should require both checks. Mail settings, the test database and the
 bootstrap admin come from the workflow `env:` block (see `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`).
@@ -537,6 +617,18 @@ handled explicitly:
   booking, a customer or an enquiry. That is why the API test suite leaves some records behind, and
   it is the first thing to add if the agency ever needs to honour a deletion request (or to clear
   out spam).
+- **The conversation lives in Gmail, and the application only records it.** That is deliberate — the
+  agency answers from the address it actually reads, and `scripts/verify-mail.ps1` proves the parts this
+  application does send — but it has two consequences worth knowing. The console's "waiting for a reply"
+  list is only as true as the staff keep it: a reply written in Gmail and never recorded here leaves the
+  enquiry looking unanswered, which is what the "I answered from my inbox" action is for. And a customer
+  writing back on their page is only mailed to the agency; nothing files the reply into the thread unless
+  somebody pastes it in. Closing that gap means Bird's inbound side: publishing the MX records below and
+  routing replies to `reply+<token>@mail.prathibalanka.com` so a webhook can match them to the enquiry.
+- **The link in an acknowledgement is a bearer credential.** `/enquiry/{access_token}` is public and
+  needs no login — 128 random bits, the same trade as the booking PIN — so anybody the customer forwards
+  that email to can read the enquiry and write on it. That is the price of not demanding an account for a
+  contact form; if it ever matters, the token should also expire, which it currently does not.
 - There is no error tracking. An exception that returns 500 is in the platform's log and nowhere
   else; add Sentry (or similar) before relying on the site unattended.
 - Mail over the Bird API is proven: a real enquiry through a running instance was **delivered** from

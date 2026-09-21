@@ -50,7 +50,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final boolean enabled;
     private final int requestsPerMinute;
     private final int burst;
-    private final List<String> paths;
+    private final List<Entry> paths;
     private final Map<String, Bucket> buckets = new ConcurrentHashMap<>();
 
     public RateLimitFilter(
@@ -61,7 +61,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
         this.enabled = enabled;
         this.requestsPerMinute = Math.max(1, requestsPerMinute);
         this.burst = Math.max(0, burst);
-        this.paths = Arrays.stream(paths.split(",")).map(String::trim).filter(p -> !p.isEmpty()).toList();
+        this.paths = Arrays.stream(paths.split(",")).map(String::trim).filter(p -> !p.isEmpty())
+                .map(Entry::parse).toList();
         if (enabled) {
             log.info("Rate limiting {} at {}/minute (burst {})", this.paths, this.requestsPerMinute, this.burst);
         }
@@ -78,7 +79,39 @@ public class RateLimitFilter extends OncePerRequestFilter {
         if (path == null) {
             return null;
         }
-        return paths.stream().filter(path::startsWith).findFirst().orElse(null);
+        return paths.stream()
+                .filter(entry -> entry.matches(request.getMethod(), path))
+                .map(Entry::label)
+                .findFirst()
+                .orElse(null);
+    }
+
+    /**
+     * One configured rate limit: a path prefix, optionally restricted to one method.
+     *
+     * <p>The method matters for the customer's own enquiry page. {@code /api/enquiries} is both a read
+     * and a write: writing has to be limited, because it costs a mail and lands in somebody's inbox,
+     * while reading is how a customer looks at their own enquiry and throttling it would answer a
+     * double-click with "too many requests". A bare prefix - the older form - limits every method, which
+     * is still right for {@code /api/contact} and the auth endpoints.
+     */
+    private record Entry(String method, String prefix) {
+
+        static Entry parse(String raw) {
+            int space = raw.indexOf(' ');
+            if (space > 0) {
+                return new Entry(raw.substring(0, space).trim().toUpperCase(), raw.substring(space + 1).trim());
+            }
+            return new Entry(null, raw);
+        }
+
+        boolean matches(String requestMethod, String path) {
+            return (method == null || method.equalsIgnoreCase(requestMethod)) && path.startsWith(prefix);
+        }
+
+        String label() {
+            return method == null ? prefix : method + ' ' + prefix;
+        }
     }
 
     @Override

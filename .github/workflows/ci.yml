@@ -156,31 +156,16 @@ jobs:
       - name: Run endpoint tests
         run: pwsh -NoProfile -File scripts/api-tests.ps1 -BaseUrl http://localhost:8080
 
-      # EmailService used to send without a sender at all, which providers reject. This proves the
-      # configured From reaches the wire, on the header and on the SMTP envelope.
-      - name: Verify the mail sender
+      # EmailService used to send without a sender at all, which providers reject - and the console's
+      # reply used to be written into the database and never sent at all, while the panel said "saved".
+      # Neither is visible from the API, so this reads what the mail server was actually handed: the
+      # From on the header and the envelope, the reply with its reference in the subject, and the link
+      # inside it opening that customer's own enquiry. See scripts/verify-mail.ps1.
+      - name: Verify the mail the application sends
         env:
           MAIL_FROM: prathibhalankavoyages@gmail.com
           MAIL_FROM_NAME: PrathibaLanka
-        run: |
-          curl -sf -X POST http://localhost:8080/api/contact \
-            -H 'Content-Type: application/json' \
-            -d '{"name":"CI","email":"ci@example.com","subject":"Sender check","message":"Checking the From address."}' \
-            > /dev/null
-
-          for i in $(seq 1 20); do
-            grep -q "From: $MAIL_FROM_NAME <$MAIL_FROM>" smtp-dump.txt 2>/dev/null && break
-            sleep 1
-          done
-
-          echo "--- captured message ---"
-          cat smtp-dump.txt || true
-
-          grep -q "MAIL FROM:<$MAIL_FROM>" smtp-dump.txt \
-            || { echo "::error::the envelope sender is not $MAIL_FROM"; exit 1; }
-          grep -q "From: $MAIL_FROM_NAME <$MAIL_FROM>" smtp-dump.txt \
-            || { echo "::error::the From header is not '$MAIL_FROM_NAME <$MAIL_FROM>'"; exit 1; }
-          echo "Sender verified on the header and the envelope."
+        run: pwsh -NoProfile -File scripts/verify-mail.ps1 -BaseUrl http://localhost:8080 -Dump smtp-dump.txt
 
       - name: Application log
         if: always()
