@@ -16,7 +16,8 @@ import static org.mockito.Mockito.when;
 class SmtpMailTransportTest {
 
     private static final OutboundMail MAIL = new OutboundMail(
-            "PrathibaLanka <bookings@mail.prathibalanka.com>",
+            "bookings@mail.prathibalanka.com",
+            "PrathibaLanka",
             "traveller@example.com",
             "prathibhalankavoyages@gmail.com",
             "We received your message – PrathibaLanka",
@@ -42,12 +43,21 @@ class SmtpMailTransportTest {
     void sendsFromToAndSubjectAsConfigured() {
         SimpleMailMessage message = sent(MAIL);
 
-        assertThat(message.getFrom()).isEqualTo(MAIL.from());
+        // SMTP wants the sender as one header, which is where the record's two fields are joined.
+        assertThat(message.getFrom()).isEqualTo("PrathibaLanka <bookings@mail.prathibalanka.com>");
         // getTo() is the array accessor and getReplyTo() the single-value one - the opposite way round
         // from what you would guess, and both assert differently as a result.
         assertThat(message.getTo()).containsExactly(MAIL.to());
         assertThat(message.getSubject()).isEqualTo(MAIL.subject());
         assertThat(message.getText()).isEqualTo(MAIL.text());
+    }
+
+    @Test
+    void sendsTheBareAddressWhenThereIsNoDisplayName() {
+        OutboundMail nameless = new OutboundMail(
+                MAIL.fromEmail(), null, MAIL.to(), MAIL.replyTo(), MAIL.subject(), MAIL.text());
+
+        assertThat(sent(nameless).getFrom()).isEqualTo("bookings@mail.prathibalanka.com");
     }
 
     @Test
@@ -57,7 +67,8 @@ class SmtpMailTransportTest {
 
     @Test
     void leavesTheReplyToOffWhenThereIsNone() {
-        OutboundMail withoutReplyTo = new OutboundMail(MAIL.from(), MAIL.to(), null, MAIL.subject(), MAIL.text());
+        OutboundMail withoutReplyTo = new OutboundMail(
+                MAIL.fromEmail(), MAIL.fromName(), MAIL.to(), null, MAIL.subject(), MAIL.text());
 
         assertThat(sent(withoutReplyTo).getReplyTo()).isNull();
     }

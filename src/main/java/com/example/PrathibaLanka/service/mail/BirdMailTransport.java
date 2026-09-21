@@ -13,26 +13,46 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Sends through Bird's email API over HTTPS.
+ * Sends through Bird's platform API over HTTPS.
  *
- * <p>Why this exists rather than "just use SMTP": Railway blocks outbound SMTP on its Free, Trial and
- * Hobby plans (see <a href="https://docs.railway.com/networking/outbound-networking">Railway's
- * outbound networking</a>), so a provider reachable only by SMTP cannot send anything there. Bird -
- * which is the platform SparkPost became - sends over HTTPS, which is not blocked.
+ * <p>Why not just SMTP: Railway blocks outbound SMTP on its Free, Trial and Hobby plans (see
+ * <a href="https://docs.railway.com/networking/outbound-networking">Railway's outbound networking</a>),
+ * so a provider reachable only by SMTP cannot send anything there.
  *
- * <p>Both transports reach the same authenticated sending domain: the DKIM key, the bounce CNAME and
- * the DMARC record published for that domain apply to the API exactly as they do to SMTP, so nothing
- * about the DNS changes when the transport does.
+ * <p>Why this endpoint and not the SparkPost-compatible one: a Bird API key's region prefix selects
+ * the host - {@code bk_us1_} keys call {@code https://us1.platform.bird.com} and {@code bk_eu1_} keys
+ * call {@code https://eu1.platform.bird.com} - and the email endpoint there is
+ * {@code POST /v1/email/messages}. The older {@code api.sparkpost.com/.../transmissions} endpoint
+ * answers such a key with 401, which is a confusing way to spend an afternoon: it looks like a bad
+ * key rather than the wrong host.
  *
- * <p>An API key is the whole credential, and it goes in the {@code Authorization} header as sent
- * (the API does not want a {@code Bearer} prefix). The key belongs in the environment, never in this
- * repository, and is never logged - {@link #describe()} prints the endpoint and not the key.
+ * <p>The request it accepts was established against the live API rather than guessed:
+ *
+ * <pre>
+ * POST https://eu1.platform.bird.com/v1/email/messages
+ * Authorization: Bearer &lt;key&gt;
+ * {
+ *   "from":     { "email": "bookings@mail.prathibalanka.com", "name": "Prathibha Lanka Voyages" },
+ *   "to":       [ "traveller@example.com" ],
+ *   "reply_to": [ "bookings@mail.prathibalanka.com" ],       // an ARRAY - a string is 422
+ *   "category": "transactional",                             // without it Bird files it as marketing
+ *   "subject":  "...",
+ *   "text":     "..."
+ * }
+ * </pre>
+ *
+ * <p>A 202 means Bird has accepted the message; delivery happens afterwards, so a 202 is "queued",
+ * not "delivered". Anything else throws with the provider's own body, which is what lands in
+ * {@code email_log} - e.g. a wrong key reads {@code 401 … "code":"Unauthorized"}.
  */
 @Component
 @ConditionalOnProperty(name = "app.mail.transport", havingValue = "bird")
 public class BirdMailTransport implements MailTransport {
 
     private static final Logger log = LoggerFactory.getLogger(BirdMailTransport.class);
+
+    /** Marks a message as a notification rather than a campaign. */
+    static final String TRANSACTIONAL = "transactional";
 
     private final RestClient http;
     private final String apiUrl;
@@ -46,8 +66,7 @@ public class BirdMailTransport implements MailTransport {
         this.apiKey = apiKey == null ? "" : apiKey.trim();
         // Built here rather than injected: this application has no RestClient.Builder bean to inject
         // (Spring Boot 4 does not publish one by default), and a missing constructor argument would
-        // fail the whole context on the one configuration that needs this class. Jackson is on the
-        // classpath, which is all the converters this call needs.
+        // fail the whole context on the one configuration that needs this class.
         this.http = RestClient.builder().baseUrl(apiUrl).build();
 
         if (this.apiKey.isEmpty()) {
@@ -73,7 +92,7 @@ public class BirdMailTransport implements MailTransport {
 
         http.post()
                 .contentType(MediaType.APPLICATION_JSON)
-                .header("Authorization", apiKey)
+                .header("Authorization", "Bearer " + apiKey)
                 .body(payload(mail))
                 .retrieve()
                 .toBodilessEntity();
@@ -87,27 +106,30 @@ public class BirdMailTransport implements MailTransport {
     }
 
     /**
-     * The request body the Transmissions API expects, built where a test can see it.
+     * The request body Bird's email endpoint expects, built where a test can see it.
      *
      * <p>Package-private on purpose: the shape of this document is the part of the integration that
-     * can be verified without an API key or a network, and it is the part most likely to be got wrong.
+     * can be verified without an API key or a network, and it is the part most likely to be got
+     * wrong - {@code reply_to} as a string rather than an array is a 422, and a missing
+     * {@code category} silently files a booking confirmation as marketing.
      */
     static Map<String, Object> payload(OutboundMail mail) {
-        Map<String, Object> content = new LinkedHashMap<>();
-        content.put("from", mail.from());
-        content.put("subject", mail.subject());
-        content.put("text", mail.text());
-        if (mail.replyTo() != null && !mail.replyTo().isBlank()) {
-            content.put("reply_to", mail.replyTo());
+        Map<String, Object> from = new LinkedHashMap<>();
+        from.put("email", mail.fromEmail());
+        if (mail.fromName() != null && !mail.fromName().isBlank()) {
+            from.put("name", mail.fromName().trim());
         }
 
-        // transactional: this is a notification to one person, not a campaign, so it is exempt from
-        // the unsubscribe machinery and must not be throttled as bulk.
-        Map<String, Object> options = Map.of("transactional", true);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("from", from);
+        body.put("to", List.of(mail.to()));
+        if (mail.replyTo() != null && !mail.replyTo().isBlank()) {
+            body.put("reply_to", List.of(mail.replyTo().trim()));
+        }
+        body.put("category", TRANSACTIONAL);
+        body.put("subject", mail.subject());
+        body.put("text", mail.text());
 
-        return Map.of(
-                "options", options,
-                "content", content,
-                "recipients", List.of(Map.of("address", Map.of("email", mail.to()))));
+        return body;
     }
 }

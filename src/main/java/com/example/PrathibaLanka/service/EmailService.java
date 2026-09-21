@@ -81,7 +81,7 @@ public class EmailService {
 
         if (transport != null) {
             try {
-                transport.send(new OutboundMail(sender(), to, replyTo(), subject, body));
+                transport.send(new OutboundMail(fromAddress, fromName, to, replyTo(), subject, body));
                 sent = true;
                 log.info("Email sent to {} | Subject: {}", to, subject);
             } catch (Exception e) {
@@ -109,9 +109,7 @@ public class EmailService {
 
     /** "Name <address>", or the bare address when no display name is configured. */
     private String sender() {
-        return (fromName == null || fromName.isBlank())
-                ? fromAddress
-                : fromName.trim() + " <" + fromAddress + ">";
+        return OutboundMail.formatSender(fromAddress, fromName);
     }
 
     /** Null when no reply-to is configured, so the transport leaves the header off entirely. */

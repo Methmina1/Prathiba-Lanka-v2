@@ -30,7 +30,7 @@ public class SmtpMailTransport implements MailTransport {
         }
 
         SimpleMailMessage message = new SimpleMailMessage();
-        message.setFrom(mail.from());
+        message.setFrom(mail.formattedFrom());
         message.setTo(mail.to());
         message.setSubject(mail.subject());
         message.setText(mail.text());
