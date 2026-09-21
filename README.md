@@ -67,11 +67,16 @@ in production and change the password after the first login.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `MAIL_HOST` / `MAIL_PORT` | `smtp.gmail.com` / `587` | SMTP server |
+| `MAIL_TRANSPORT` | `smtp` | `smtp`, `bird` (the HTTPS API production uses) or `none` — see [Email](#email) |
+| `MAIL_FROM` / `MAIL_FROM_NAME` | `prathibhalankavoyages@gmail.com` / `PrathibaLanka` | Sender the recipient sees. Over the Bird API it must be on the verified sending domain |
+| `MAIL_REPLY_TO` | `prathibhalankavoyages@gmail.com` | Where replies go. The sending subdomain has no MX, so without this a reply bounces |
+| `BIRD_API_KEY` | *(empty)* | Bird API key, needed when `MAIL_TRANSPORT=bird` |
+| `BIRD_API_URL` | EU Transmissions endpoint | Bird's API base URL |
+| `BIRD_SENDING_DOMAIN` | `mail.prathibalanka.com` | Only used to warn at startup when `MAIL_FROM` is not on it |
+| `MAIL_HOST` / `MAIL_PORT` | `smtp.gmail.com` / `587` | SMTP server (`MAIL_TRANSPORT=smtp`) |
 | `MAIL_USERNAME` | `prathibhalankavoyages@gmail.com` | SMTP account |
 | `MAIL_PASSWORD` | *(empty)* | **Must be set**: a Google App Password, not the account password |
 | `MAIL_SMTP_AUTH` / `MAIL_SMTP_STARTTLS` | `true` / `true` | SMTP authentication and TLS (STARTTLS is for port 587) |
-| `MAIL_FROM` / `MAIL_FROM_NAME` | `prathibhalankavoyages@gmail.com` / `PrathibaLanka` | Sender the recipient sees |
 
 **Uploaded media**
 
@@ -103,24 +108,80 @@ to. Keep `numReplicas` at 1 while it is on: each instance counts in its own memo
 | `LOG_LEVEL` | `INFO` under `prod` | Root log level |
 | `SQL_LOG_LEVEL` | `WARN` | Hibernate SQL logging; raise to `DEBUG` only locally |
 
-Mail goes out as the agency's Gmail account. Two things have to be right before it will send:
+## Email
 
-1. **`MAIL_PASSWORD` must be a Google App Password**, not the account password — Gmail rejects plain
-   SMTP logins. Create one at `myaccount.google.com/apppasswords` (2-step verification has to be on
-   first); it is 16 characters and shown once.
-2. **`MAIL_FROM` must be that same account**, or a verified alias on it. Gmail refuses to send as an
-   address it has not verified.
+Three ways out, chosen by `MAIL_TRANSPORT`:
 
-`EmailService` sets the sender explicitly (`Name <address>`, both the header and the SMTP envelope),
-because JavaMail otherwise invents one like `user@host` and providers reject it.
+| Value | What it does | Used by |
+|---|---|---|
+| `smtp` *(default)* | JavaMail to a mail server | Local development, CI (pointed at `scripts/fake-smtp.ps1`) |
+| `bird` | Bird's email API over HTTPS | Production — see below |
+| `none` | Sends nothing; every attempt is still written to `email_log` | Anywhere mail must not leave |
+
+**Why production cannot use SMTP.** Railway blocks outbound SMTP on its Free, Trial and Hobby plans
+([their words](https://station.railway.com/questions/is-outbound-smtp-ports-465-587-blocked-8a0c4874):
+"use a dedicated email service that provides HTTPS APIs"), which is exactly why the Gmail settings
+never worked there. Bird — the platform SparkPost became — sends over HTTPS, which is not blocked.
+`EmailService` does not know the difference: it hands a message to whichever `MailTransport` the
+configuration selected, and both write the same `email_log` row.
+
+### Bird (production)
+
+The sending domain is **`mail.prathibalanka.com`**, a subdomain of the agency's own domain. Three
+records make it authenticated, and all three are published and verified:
+
+| Type | Name | Value | Why |
+|---|---|---|---|
+| TXT | `bird-844-0926._domainkey.mail` | `v=DKIM1; k=rsa; p=MIIBIjANBg…` | Signs every message as this domain, which is what DMARC aligns on |
+| CNAME | `send.mail` | `eu1.bounce.bird.com` | The envelope sender (Return-Path). That host publishes `v=spf1 exists:%{i}._spf.sparkpostmail.com ~all`, so the bounce address passes SPF |
+| TXT | `_dmarc.mail` | `v=DMARC1; p=none; rua=mailto:dmarc-agg@dmarc.bird.com;` | Policy plus Bird's aggregate reports |
+
+Four further records are deliberately **not** published: the three inbound `MX` records (they would
+change where mail *to* the domain is delivered) and `links.mail` (click tracking). Consequence of
+skipping the MX records: nothing can receive mail at `@mail.prathibalanka.com`, so **`MAIL_REPLY_TO`
+must point at an inbox a person reads** — otherwise a customer hitting reply writes into a mailbox
+that does not exist. Leaving `links.mail` out means click tracking must stay off in Bird's settings;
+turning it on rewrites links to a host that does not resolve.
+
+| Variable | Value | Notes |
+|---|---|---|
+| `MAIL_TRANSPORT` | `bird` | Selects the API transport |
+| `BIRD_API_KEY` | *(secret)* | Created in Bird with send permission. Goes in the `Authorization` header as issued — no `Bearer` prefix |
+| `BIRD_API_URL` | `https://api.eu.sparkpost.com/api/v1/transmissions` | The EU endpoint, matching the `eu1` bounce host |
+| `MAIL_FROM` | e.g. `bookings@mail.prathibalanka.com` | **Must be on the verified subdomain.** Bird refuses anything else, and the app warns at startup when it does not match `BIRD_SENDING_DOMAIN` |
+| `MAIL_REPLY_TO` | `prathibhalankavoyages@gmail.com` | Where replies land |
+| `BIRD_SENDING_DOMAIN` | `mail.prathibalanka.com` | Only used for that startup warning |
+
+`EmailService` sets the sender explicitly (`Name <address>`, both header and envelope), because
+JavaMail otherwise invents one like `user@host` and providers reject it. It also logs one line at
+startup saying which transport it is using and as whom, so a deployment is not a guess:
+
+```
+Mail goes out over Bird API (https://api.eu.sparkpost.com/api/v1/transmissions) as PrathibaLanka <bookings@mail.prathibalanka.com>
+Replies are directed to prathibhalankavoyages@gmail.com
+```
 
 Mail is sent after the transaction commits, on a separate thread, so a failed send never fails the
-request: the attempt is stored in `email_log` with `sent` and `failure_reason`. There is no retry - a
-failure is logged and dropped, so watch that table when you change the mail settings.
+request: the attempt is stored in `email_log` with `sent` and `failure_reason` — including the
+provider's own words, so a rejected key reads `401 Unauthorized: {"errors":[{"message":
+"Unauthorized."}]}` rather than "something went wrong". There is no retry; a failure is logged and
+dropped, so watch that table when you change the mail settings.
 
-Gmail's own limits apply: a free account can send to roughly 500 recipients a day. Move to a
-transactional provider (SES, SendGrid, Postmark) before volume matters, and keep the same
-`MAIL_FROM` - by then the sending domain wants SPF and DKIM records.
+**Testing it.** `scripts/api-tests.ps1` posts an enquiry and asserts `autoResponseSent` flips to true,
+which is the whole path: request → queue → transport → `email_log`. With `MAIL_TRANSPORT=bird` and a
+key in the environment, the same check proves the API send end to end.
+
+### SMTP (`MAIL_TRANSPORT=smtp`)
+
+The development default, and the agency's Gmail account. Two things have to be right:
+
+1. **`MAIL_PASSWORD` must be a Google App Password**, not the account password — Gmail rejects plain
+   SMTP logins. Create one at `myaccount.google.com/apppasswords` (2-step verification first); it is
+   16 characters and shown once. `MailConfig` compacts it if it is pasted with its display spaces.
+2. **`MAIL_FROM` must be that same account**, or a verified alias on it.
+
+`spring.mail.default-encoding=UTF-8` matters here: without it JavaMail uses the platform default and
+the en dash in a subject line arrives as `â€“`.
 
 ## Authentication
 
@@ -259,10 +320,13 @@ so the dashboard needs no build settings.
    | `JWT_SECRET` | at least 32 random bytes (`openssl rand -base64 48`). **The app refuses to boot without it** |
    | `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` | as above |
    | `MEDIA_DIR` | `/data/uploads` — matches the volume below |
+   | `MAIL_TRANSPORT` | `bird` — SMTP is blocked on this plan, so the API is the only transport that works |
+   | `BIRD_API_KEY` | the key from Bird's dashboard. **Set this, or every send is recorded in `email_log` as a failure** |
+   | `MAIL_FROM` | an address on the verified subdomain, e.g. `bookings@mail.prathibalanka.com` |
+   | `MAIL_REPLY_TO` | `prathibhalankavoyages@gmail.com` — the sending subdomain cannot receive mail |
    | `CORS_ALLOWED_ORIGINS` | only needed if the browser calls this API directly; with the front end proxying, leave it out |
    | `BOOTSTRAP_ADMIN_PASSWORD` | the first admin's password, for the first deploy only |
    | `BOOTSTRAP_ADMIN_EMAIL` | `prathibhalankavoyages@gmail.com` (this is the default) |
-   | `MAIL_PASSWORD` | a Google App Password, or leave it out and no mail is sent (see below) |
 
 4. **Volume** — *Service → Variables/Volumes → New Volume*, mounted at **`/data`**. Without it every
    uploaded photograph is deleted on the next deploy while the database still points at it.
@@ -278,10 +342,10 @@ Notes that come from running it this way:
   check wait five seconds for Gmail.
 - **Rate limits are per instance.** `numReplicas: 1` is deliberate: two instances would each allow a
   full bucket, and media on a volume cannot be mounted into more than one anyway.
-- **The mail account is optional.** With no `MAIL_PASSWORD` the site works normally — enquiries and
-  bookings are stored, and the send failure is recorded in `email_log` with `sent=false` and the
-  reason. Gmail also has to accept a login from Railway's addresses; if it does not, the same
-  `email_log` shows `Authentication failed` rather than anything failing silently.
+- **The site works without mail.** Miss a mail variable and nothing else breaks: enquiries and
+  bookings are stored, and the failed send is recorded in `email_log` with `sent=false` and the
+  provider's own reason — `401 Unauthorized` for a wrong Bird key, `Authentication failed` for a
+  rejected SMTP login. Watch that table, because a failed send is otherwise invisible.
 - **Migrations.** The schema ships as `V1__baseline.sql`, which is the schema as it stood when Flyway
   was introduced, so an existing database is baselined at 1 and a new one runs it. Add changes as
   `V2__…` and never edit V1: a checksum mismatch stops the next deploy.
@@ -402,8 +466,16 @@ handled explicitly:
   out spam).
 - There is no error tracking. An exception that returns 500 is in the platform's log and nowhere
   else; add Sentry (or similar) before relying on the site unattended.
-- Mail from the deployed environment has not been verified end to end: the account still needs a
-  Google App Password, and whether Gmail accepts a login from the host's addresses is something only
-  a real send will show. `email_log` records the outcome of every attempt either way.
+- Mail over the Bird API is verified as far as it can be without a key: the DNS records are published
+  and correct, the app boots with `MAIL_TRANSPORT=bird`, and a deliberately wrong key is answered
+  `401 Unauthorized` by Bird and recorded in `email_log`. **What is still unproven is a successful
+  send** — that needs `BIRD_API_KEY`, and one enquiry is enough to show it.
+- Bird's inbound side is not set up: no `MX` records, so `@mail.prathibalanka.com` cannot receive
+  anything and `MAIL_REPLY_TO` is what keeps replies working. If the agency ever wants
+  `bookings@prathibalanka.com` to be a real mailbox, publish the three `rx*.eu1.inbound.bird.com` MX
+  records and stop relying on the reply-to.
+- There is no bounce or complaint handling: Bird reports them to its dashboard and to the DMARC
+  address, and nothing in this application notices. At volume, add a Bird webhook that records
+  bounces, or the first sign of a bad address list is a silent drop in deliverability.
 - Scheduled work (reminders, stale pending bookings) is not implemented yet; when it is added,
   running more than one instance needs a lock (ShedLock) so jobs do not run twice.

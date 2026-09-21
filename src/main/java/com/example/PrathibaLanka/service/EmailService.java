@@ -5,13 +5,14 @@ import com.example.PrathibaLanka.entity.ContactQuery;
 import com.example.PrathibaLanka.entity.EmailLog;
 import com.example.PrathibaLanka.enums.EmailType;
 import com.example.PrathibaLanka.repository.EmailLogRepository;
+import com.example.PrathibaLanka.service.mail.MailTransport;
+import com.example.PrathibaLanka.service.mail.OutboundMail;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.mail.SimpleMailMessage;
-import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,7 +25,13 @@ public class EmailService {
 
     private static final Logger log = LoggerFactory.getLogger(EmailService.class);
 
-    private final ObjectProvider<JavaMailSender> mailSenderProvider;
+    /**
+     * Whichever transport the configuration chose - SMTP locally, the Bird API where SMTP is blocked.
+     * It is looked up rather than injected because a configuration can deliberately have none
+     * ({@code app.mail.transport=none}), and "no transport" means the messages are logged and
+     * recorded rather than that the application cannot start.
+     */
+    private final ObjectProvider<MailTransport> transportProvider;
     private final EmailLogRepository emailLogRepository;
 
     /** Sender the recipient sees. Configured rather than left to JavaMail's invented default. */
@@ -33,6 +40,32 @@ public class EmailService {
 
     @Value("${app.mail.from-name:}")
     private String fromName;
+
+    /**
+     * Where a reply should go.
+     *
+     * This matters more than it looks: the application sends from a subdomain that is set up to send
+     * only (a DKIM key and a bounce record, no MX), so a customer hitting reply on a booking email
+     * would otherwise write into a mailbox that does not exist. With this set, the reply lands in the
+     * agency's real inbox.
+     */
+    @Value("${app.mail.reply-to:}")
+    private String replyToAddress;
+
+    /** One line at startup saying how mail leaves this instance, so a deployment is not a guess. */
+    @PostConstruct
+    void announceTransport() {
+        MailTransport transport = transportProvider.getIfAvailable();
+        if (transport == null) {
+            log.warn("No mail transport is configured (app.mail.transport=none). Messages are written "
+                    + "to email_log and not sent.");
+        } else {
+            log.info("Mail goes out over {} as {}", transport.describe(), sender());
+        }
+        if (replyToAddress != null && !replyToAddress.isBlank()) {
+            log.info("Replies are directed to {}", replyToAddress);
+        }
+    }
 
     /**
      * Sends the message and always writes an {@link EmailLog} row, so failed deliveries are
@@ -44,16 +77,11 @@ public class EmailService {
         boolean sent = false;
         String failureReason = null;
 
-        JavaMailSender mailSender = mailSenderProvider.getIfAvailable();
+        MailTransport transport = transportProvider.getIfAvailable();
 
-        if (mailSender != null) {
+        if (transport != null) {
             try {
-                SimpleMailMessage message = new SimpleMailMessage();
-                message.setFrom(sender());
-                message.setTo(to);
-                message.setSubject(subject);
-                message.setText(body);
-                mailSender.send(message);
+                transport.send(new OutboundMail(sender(), to, replyTo(), subject, body));
                 sent = true;
                 log.info("Email sent to {} | Subject: {}", to, subject);
             } catch (Exception e) {
@@ -61,7 +89,7 @@ public class EmailService {
                 log.error("Failed to send email to {}: {}", to, failureReason);
             }
         } else {
-            failureReason = "JavaMailSender not configured (mail.host missing)";
+            failureReason = "No mail transport is configured";
             log.warn("Mail not configured. Logging only → {} | Subject: {}", to, subject);
         }
 
@@ -84,6 +112,11 @@ public class EmailService {
         return (fromName == null || fromName.isBlank())
                 ? fromAddress
                 : fromName.trim() + " <" + fromAddress + ">";
+    }
+
+    /** Null when no reply-to is configured, so the transport leaves the header off entirely. */
+    private String replyTo() {
+        return (replyToAddress == null || replyToAddress.isBlank()) ? null : replyToAddress.trim();
     }
 
     public boolean sendBookingPendingEmail(BookingRequest booking) {
