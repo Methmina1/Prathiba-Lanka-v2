@@ -139,9 +139,11 @@ records make it authenticated, and all three are published and verified:
 Four further records are deliberately **not** published: the three inbound `MX` records and
 `links.mail`. Click tracking does not need it (Bird sends with `track_clicks` and `track_opens` off,
 and turning them on would rewrite links to `links.mail`, which does not resolve until that record
-exists). The MX records are the one real consequence: **nothing can receive mail at
-`@mail.prathibalanka.com` yet**, so `MAIL_REPLY_TO` is what keeps a customer's reply from bouncing —
-point it at an inbox a person reads until the inbound records are added.
+exists). The MX records would make `@mail.prathibalanka.com` a mailbox; until then everything sends
+from the subdomain and nothing receives on it, which is why **`MAIL_REPLY_TO` points at the agency's
+Gmail inbox** — the one address that is certainly read. Publishing the MX records later is what makes
+`bookings@mail.prathibalanka.com` possible; note that inbound mail then lands in **Bird**, so its
+routing (agent mailbox or forwarding) has to be configured there as well.
 
 ### The API it calls
 
@@ -157,7 +159,7 @@ Authorization: Bearer <key>
 
 { "from":     { "email": "bookings@mail.prathibalanka.com", "name": "Prathibha Lanka Voyages" },
   "to":       [ "traveller@example.com" ],
-  "reply_to": [ "bookings@mail.prathibalanka.com" ],
+  "reply_to": [ "prathibhalankavoyages@gmail.com" ],
   "category": "transactional",
   "subject":  "Your Trip Booking is Pending – PIN: ABC12345",
   "text":     "Dear …" }
@@ -173,7 +175,7 @@ wrong for a booking acknowledgement.
 | `BIRD_API_KEY` | *(secret)* | Bird dashboard → Developers → API keys, with send permission. Sent as `Authorization: Bearer <key>` |
 | `BIRD_API_URL` | `https://eu1.platform.bird.com/v1/email/messages` | Change the host if the key's prefix is not `eu1` |
 | `MAIL_FROM` | `bookings@mail.prathibalanka.com` | **Must be on the verified subdomain.** Bird refuses anything else, and the app warns at startup when it does not match `BIRD_SENDING_DOMAIN` |
-| `MAIL_REPLY_TO` | `bookings@mail.prathibalanka.com` | Where replies go. Reaches a person only once the inbound MX records are published — until then, point it at an inbox that exists |
+| `MAIL_REPLY_TO` | `prathibhalankavoyages@gmail.com` | Where replies go — the agency's own inbox, which is the one that answers. `bookings@mail.prathibalanka.com` becomes possible once Bird's inbound MX records are published (see below) |
 | `BIRD_SENDING_DOMAIN` | `mail.prathibalanka.com` | Only used for that startup warning |
 
 `EmailService` sets the sender explicitly (`Name <address>`, both header and envelope), because
@@ -182,7 +184,7 @@ startup saying which transport it is using and as whom, so a deployment is not a
 
 ```
 Mail goes out over Bird API (https://eu1.platform.bird.com/v1/email/messages) as Prathibha Lanka Voyages <bookings@mail.prathibalanka.com>
-Replies are directed to bookings@mail.prathibalanka.com
+Replies are directed to prathibhalankavoyages@gmail.com
 ```
 
 Mail is sent after the transaction commits, on a separate thread, so a failed send never fails the
@@ -357,7 +359,7 @@ so the dashboard needs no build settings.
    | `MAIL_TRANSPORT` | `bird` — SMTP is blocked on this plan, so the API is the only transport that works |
    | `BIRD_API_KEY` | the key from Bird's dashboard. **Set this, or every send is recorded in `email_log` as a failure** |
    | `MAIL_FROM` | `bookings@mail.prathibalanka.com` |
-   | `MAIL_REPLY_TO` | `bookings@mail.prathibalanka.com` — the address the agency asked replies to reach. It only receives once the inbound MX records are published; until then this is a mailbox that does not answer, and `prathibhalankavoyages@gmail.com` is the safe value |
+   | `MAIL_REPLY_TO` | `prathibhalankavoyages@gmail.com` — replies go to the inbox the agency reads. Moving this to `bookings@mail.prathibalanka.com` is a one-variable change, but only worth making once the inbound MX records are published and Bird is routing that mail somewhere |
    | `CORS_ALLOWED_ORIGINS` | only needed if the browser calls this API directly; with the front end proxying, leave it out |
    | `BOOTSTRAP_ADMIN_PASSWORD` | the first admin's password, for the first deploy only |
    | `BOOTSTRAP_ADMIN_EMAIL` | `prathibhalankavoyages@gmail.com` (this is the default) |
@@ -503,10 +505,11 @@ handled explicitly:
 - Mail over the Bird API is proven: a real enquiry through a running instance was **delivered** from
   `bookings@mail.prathibalanka.com` (Bird's events: accepted → processed by Gmail → delivered, nothing
   bounced or rejected).
-- Bird's **inbound** side is not set up: no `MX` records, so `@mail.prathibalanka.com` cannot receive
-  anything. Replies are pointed at `bookings@mail.prathibalanka.com` as the agency asked, which means
-  that address has to start receiving before a customer's reply lands anywhere — publish the three
-  `rx*.eu1.inbound.bird.com` MX records, or point `MAIL_REPLY_TO` back at the Gmail inbox meanwhile.
+- Bird's **inbound** side is not set up, and by choice: the subdomain sends and does not receive, so
+  there is no `bookings@mail.prathibalanka.com` mailbox. `MAIL_REPLY_TO` points at the agency's Gmail
+  inbox instead, which is the address that actually gets read. Publishing the three
+  `rx*.eu1.inbound.bird.com` MX records is what would change that — and it also needs Bird's inbound
+  routing configured, because that mail arrives at Bird, not at Gmail.
 - There is no bounce or complaint handling: Bird reports them to its dashboard and to the DMARC
   address, and nothing in this application notices. At volume, add a Bird webhook that records
   bounces, or the first sign of a bad address list is a silent drop in deliverability.
