@@ -78,10 +78,36 @@ public class PageContentService {
     }
 
     public PageContent save(ContentSection section, JsonNode payload, Long adminId) {
-        String serialised = validateAndSerialise(section, payload);
+        return save(section, payload, namedAdmin(adminId));
+    }
 
-        Admin admin = adminRepo.findById(adminId)
+    /**
+     * Creates the row from the bundled default when it is missing. Used at startup.
+     *
+     * <p>A fresh database can have no admin in it: the account is only created when
+     * BOOTSTRAP_ADMIN_PASSWORD is set, and a deployment that leaves it out is a supported
+     * configuration rather than a misconfiguration. The author column is nullable for exactly this
+     * row, so an unknown admin is recorded as no author - looking the id up regardless threw
+     * "The given id must not be null" and stopped the application from starting at all.
+     */
+    public PageContent seed(ContentSection section, String defaultJson, Long adminId) {
+        return contentRepo.findBySection(section).orElseGet(() -> {
+            Admin admin = adminId == null ? null : adminRepo.findById(adminId).orElse(null);
+            return save(section, read(defaultJson), admin);
+        });
+    }
+
+    /** The console is behind an authenticated administrator, so a missing one is a programming error. */
+    private Admin namedAdmin(Long adminId) {
+        if (adminId == null) {
+            throw new IllegalStateException("Page content cannot be saved without an administrator.");
+        }
+        return adminRepo.findById(adminId)
                 .orElseThrow(() -> new ResourceNotFoundException("Admin not found with id: " + adminId));
+    }
+
+    private PageContent save(ContentSection section, JsonNode payload, Admin admin) {
+        String serialised = validateAndSerialise(section, payload);
 
         PageContent content = contentRepo.findBySection(section).orElseGet(PageContent::new);
         content.setSection(section);
@@ -89,11 +115,6 @@ public class PageContentService {
         content.setUpdatedBy(admin);
 
         return contentRepo.save(content);
-    }
-
-    /** Creates the row from the bundled default when it is missing. Used at startup. */
-    public PageContent seed(ContentSection section, String defaultJson, Long adminId) {
-        return contentRepo.findBySection(section).orElseGet(() -> save(section, read(defaultJson), adminId));
     }
 
     // ------------------------------------------------------------------ validation

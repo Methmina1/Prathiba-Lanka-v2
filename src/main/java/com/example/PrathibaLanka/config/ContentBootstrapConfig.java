@@ -47,6 +47,15 @@ public class ContentBootstrapConfig {
                     .map(Admin::getAdminId)
                     .orElse(null);
 
+            if (adminId == null) {
+                // Not an error: BOOTSTRAP_ADMIN_PASSWORD may be unset, in which case no admin was
+                // created and the seeded rows simply name no author. Say so, because "who edited this
+                // page" is otherwise a blank the console shows without explanation.
+                log.warn("No admin account exists for '{}', so the seeded page content records no "
+                        + "author. Set BOOTSTRAP_ADMIN_PASSWORD and start again to create the account.",
+                        adminEmail.trim().toLowerCase());
+            }
+
             for (ContentSection section : ContentSection.values()) {
                 if (contentService.find(section).isPresent()) {
                     continue;
