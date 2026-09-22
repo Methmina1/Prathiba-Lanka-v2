@@ -587,7 +587,7 @@ Six suites cover the project between them — 309 checks in total:
 
 | Suite | Needs | Checks |
 |---|---|---|
-| `scripts/api-tests.ps1` (this repo) | a running API | 180 — every endpoint over HTTP |
+| `scripts/api-tests.ps1` (this repo) | a running API | 185 — every endpoint over HTTP |
 | `scripts/verify-mail.ps1` (this repo) | a running API + the SMTP sink | 16 — what the mail server was handed |
 | `mvn test` (this repo) | nothing | 23 — the Spring context, the mail transports |
 | `npm run check:render` (front end) | nothing | 25 routes rendered in Node |
@@ -604,7 +604,7 @@ database. It marks everything it creates and deletes it again at the end of the 
 | Job | What it does |
 |---|---|
 | `Compile & test` | `mvn -B -ntp clean verify` against a `postgres:15` service container; uploads surefire reports + the application jar |
-| `API endpoint tests` | boots the built jar against the same Postgres, points mail at `scripts/fake-smtp.ps1`, waits for readiness, then runs `scripts/api-tests.ps1` (180 checks) and `scripts/verify-mail.ps1` (16 checks) |
+| `API endpoint tests` | boots the built jar against the same Postgres, points mail at `scripts/fake-smtp.ps1`, waits for readiness, then runs `scripts/api-tests.ps1` (185 checks) and `scripts/verify-mail.ps1` (16 checks) |
 | `Docker image starts with the prod profile` | builds the image Railway runs, proves it refuses to start without `JWT_SECRET`, then starts it against Postgres and waits for `/actuator/health` to report `UP` — the same three things a deploy depends on |
 
 The last step of the second job reads the sink's dump rather than the API, because the failures this
