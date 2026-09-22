@@ -298,6 +298,11 @@ Booking status flow: `PENDING` → `CONFIRMED` or `REJECTED`; only pending booki
 Enquiry status flow: `NEW` (needs a reply) → `RESPONDED` (answered), and back to `NEW` when the customer
 writes again. `PATCH /api/admin/queries/{id}/respond` sends the reply to the customer by email.
 
+`POST /api/admin/journal` and `PUT /api/admin/journal/{id}` accept an optional `publishedAt`. Left out,
+the API stamps the moment the story was published, which is right for the console; sent, it is honoured -
+which is what lets a second instance be seeded without dating the whole archive the day of the import,
+and lets an editor backdate a story written before the site existed. A draft is never given a date.
+
 ## Enquiries, and the conversation that follows them
 
 Two kinds of enquiry arrive, and they are answered differently:
@@ -505,6 +510,47 @@ Notes that come from running it this way:
   here.
 - **Scaling up** means moving uploads to an object store and the rate-limit counters to something
   shared, and putting the mail worker in one instance only.
+
+### Going live, in order
+
+Written as the order that actually matters, because two of these are silent when they are wrong: the
+site comes up and looks right, and only a customer finds out.
+
+1. **Push the branch the service watches.** GitHub has to have the code before Railway can build it,
+   and a service watching `main` will not see work that only exists on `updates`. Check *Settings →
+   Source* on each service.
+2. **Set the variables**, at least: `JWT_SECRET`, `DB_URL`/`DB_USERNAME`/`DB_PASSWORD`,
+   `MEDIA_DIR=/data/uploads`, `MAIL_TRANSPORT=bird`, `BIRD_API_KEY`,
+   `MAIL_FROM=bookings@mail.prathibalanka.com`, `MAIL_FROM_NAME`, `MAIL_REPLY_TO`, and
+   **`APP_PUBLIC_URL`** — the last one is what goes into the link in every acknowledgement and reply
+   email, and left at its default those emails point at `http://localhost:5173`, which the customer
+   cannot open. The app refuses to boot without `JWT_SECRET` and `MEDIA_DIR`, so those two are loud.
+3. **Add the volume** at `/data` before the first upload. Without it the database points at
+   photographs that a deploy will delete.
+4. **Point the domain** at the front end service (the API needs no public domain - nginx proxies
+   `/api` and `/media` to it). On the front end, set `BACKEND_URL` to the API service
+   (`http://<service>.railway.internal:8080` inside the project, so that traffic is private and not
+   billed as egress) and build with `SITE_URL` set to the public address, which fills in the
+   `og:url`/`og:image` tags that link previews use.
+5. **Seed the content** from the instance that already has it - see the front end's
+   `scripts/seed-production.mjs`. A fresh database has the schema and an administrator and nothing
+   else: no journeys, no stories, no photographs.
+6. **Smoke test the deployment**, which is the same suite this repository uses everywhere:
+
+   ```bash
+   powershell -ExecutionPolicy Bypass -File scripts/api-tests.ps1 -BaseUrl https://<front-end-host>
+   ```
+
+   It exercises every endpoint over HTTP. It is written for a development database and leaves records
+   behind, so run it once and tidy up, or accept a few test rows.
+7. **Turn the bootstrap admin off** (`BOOTSTRAP_ADMIN_ENABLED=false`) once the account exists, and
+   change its password from the console if it was ever in a chat window.
+8. **Schedule the dump** from the section above, and put the file somewhere that is not this project.
+
+Two things that only go wrong in production, so they are worth checking once by hand: send one real
+enquiry through the deployed contact form and confirm the acknowledgement arrives (that is the whole
+mail path: HTTPS to Bird, DKIM, and the link back to the customer's own page), and open that link from
+a phone, where the customer will.
 
 ## Tests
 
