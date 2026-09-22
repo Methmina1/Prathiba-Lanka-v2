@@ -36,6 +36,23 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-webmvc</artifactId>
 		</dependency>
+		<!-- /actuator/health, which is what the platform polls to decide an instance is alive. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-actuator</artifactId>
+		</dependency>
+		<!-- The schema is versioned: see src/main/resources/db/migration.
+		     Spring Boot 4 keeps Flyway's auto-configuration in its own module, so the starter is what
+		     makes spring.flyway.* take effect - flyway-core alone is on the classpath and never runs. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-flyway</artifactId>
+		</dependency>
+		<!-- Flyway 10+ splits database support out; this is the PostgreSQL dialect. -->
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-database-postgresql</artifactId>
+		</dependency>
 
 		<dependency>
 			<groupId>org.springframework.boot</groupId>

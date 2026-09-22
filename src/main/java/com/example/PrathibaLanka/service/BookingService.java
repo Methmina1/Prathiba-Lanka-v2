@@ -7,15 +7,18 @@ import com.example.PrathibaLanka.entity.Customer;
 import com.example.PrathibaLanka.entity.TravelPackage;
 import com.example.PrathibaLanka.enums.BookingStatus;
 import com.example.PrathibaLanka.enums.PackageStatus;
+import com.example.PrathibaLanka.event.BookingCancelledEvent;
 import com.example.PrathibaLanka.event.BookingConfirmedEvent;
 import com.example.PrathibaLanka.event.BookingCreatedEvent;
 import com.example.PrathibaLanka.exception.BadRequestException;
+import com.example.PrathibaLanka.exception.ForbiddenException;
 import com.example.PrathibaLanka.exception.ResourceNotFoundException;
 import com.example.PrathibaLanka.repository.AdminRepository;
 import com.example.PrathibaLanka.repository.BookingRequestRepository;
 import com.example.PrathibaLanka.repository.CustomerRepository;
 import com.example.PrathibaLanka.repository.TravelPackageRepository;
 import com.example.PrathibaLanka.security.OwnershipGuard;
+import com.example.PrathibaLanka.security.UserPrincipal;
 import com.example.PrathibaLanka.util.PinGenerator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
@@ -42,17 +45,46 @@ public class BookingService {
     private final ApplicationEventPublisher events;
 
     /**
-     * Creates a PENDING booking for the authenticated customer.
-     * {@code dto.customerId}, when present, must match the authenticated customer.
+     * Creates a PENDING booking, for a signed-in customer or for somebody who has no account.
      *
-     * <p>The package row is locked for the duration of the transaction, which serializes the
-     * capacity check and the insert so concurrent requests cannot oversubscribe a package.
+     * <p>Most requests come from the public form, filled in by a traveller browsing the site, so the
+     * only identity the request has is the name and email typed into it. That is enough: the booking
+     * carries those details itself (see {@code contact_name}), the customer is left null, and the
+     * PIN is what the person tracks it with. Nothing is invented on their behalf - creating a
+     * customer row here would take their email address and stop them registering with it later.
+     *
+     * <p>Signed-in customers are linked to their account, and their account details win over whatever
+     * the body says, so a booking cannot be made to look like it came from somebody else. If a request
+     * arrives without a session but with an email that does belong to an account, it is attached to
+     * that account as well - so "I booked without signing in, where is it?" has an answer.
+     *
+     * <p>The package row is locked for the duration of the transaction, which serializes the capacity
+     * check and the insert so concurrent requests cannot oversubscribe a package.
      */
-    public BookingRequest requestBooking(BookingRequestDTO dto, Long authenticatedCustomerId) {
-        Long customerId = OwnershipGuard.requireOwnCustomerId(dto.getCustomerId(), authenticatedCustomerId);
+    public BookingRequest requestBooking(BookingRequestDTO dto, UserPrincipal principal) {
+        Customer customer;
+        String contactName;
+        String contactEmail;
 
-        Customer customer = customerRepo.findById(customerId)
-                .orElseThrow(() -> new ResourceNotFoundException("Customer not found with id: " + customerId));
+        if (principal != null) {
+            Long customerId = OwnershipGuard.requireOwnCustomerId(dto.getCustomerId(), principal.getUserId());
+            customer = customerRepo.findById(customerId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Customer not found with id: " + customerId));
+            contactName = customer.getFullName();
+            contactEmail = customer.getEmail();
+        } else {
+            if (dto.getCustomerId() != null) {
+                throw new ForbiddenException(
+                        "Sign in as a customer to request a journey on an account.");
+            }
+            contactName = trimmed(dto.getContactName());
+            contactEmail = trimmed(dto.getContactEmail());
+            if (contactName == null || contactEmail == null) {
+                throw new BadRequestException(
+                        "A name and an email address are required so we can reply to your request.");
+            }
+            customer = customerRepo.findByEmailIgnoreCase(contactEmail).orElse(null);
+        }
 
         TravelPackage pkg = packageRepo.findByIdForUpdate(dto.getPackageId())
                 .orElseThrow(() -> new ResourceNotFoundException("Package not found with id: " + dto.getPackageId()));
@@ -81,6 +113,8 @@ public class BookingService {
         BookingRequest booking = new BookingRequest();
         booking.setPinCode(pin);
         booking.setCustomer(customer);
+        booking.setContactName(contactName);
+        booking.setContactEmail(contactEmail);
         booking.setTravelPackage(pkg);
         booking.setNumTravelers(dto.getNumTravelers());
         booking.setPreferredTravelDate(dto.getPreferredTravelDate());
@@ -92,6 +126,15 @@ public class BookingService {
         events.publishEvent(new BookingCreatedEvent(saved.getBookingId()));
 
         return saved;
+    }
+
+    /** Trimmed text, or null when there was nothing but whitespace. */
+    private static String trimmed(String value) {
+        if (value == null) {
+            return null;
+        }
+        String clean = value.trim();
+        return clean.isEmpty() ? null : clean;
     }
 
     public BookingRequest confirmBooking(Long bookingId, BigDecimal confirmedPrice,
@@ -121,6 +164,12 @@ public class BookingService {
         return saved;
     }
 
+    /**
+     * Cancels a pending request.
+     *
+     * <p>The traveller is told: both outcomes of a review are emails, not just the happy one, so a
+     * request cannot sit unanswered while the person waits for news.
+     */
     public BookingRequest rejectBooking(Long bookingId) {
         BookingRequest booking = bookingRepo.findById(bookingId)
                 .orElseThrow(() -> new ResourceNotFoundException("Booking not found with id: " + bookingId));
@@ -130,7 +179,11 @@ public class BookingService {
         }
 
         booking.setStatus(BookingStatus.REJECTED);
-        return bookingRepo.save(booking);
+        BookingRequest saved = bookingRepo.save(booking);
+
+        events.publishEvent(new BookingCancelledEvent(saved.getBookingId()));
+
+        return saved;
     }
 
     @Transactional(readOnly = true)

@@ -23,14 +23,25 @@
     powershell -ExecutionPolicy Bypass -File scripts/api-tests.ps1 -BaseUrl http://localhost:18080
 
 .NOTES
+    The admin password is not stored here: it comes from BOOTSTRAP_ADMIN_PASSWORD (the same variable
+    the app creates the account from), or from PRATHIBALANKA_ADMIN_PASSWORD, or from -AdminPassword.
+
     Exit code 0 = every check passed, 1 = at least one check failed.
 #>
 [CmdletBinding()]
 param(
     [string]$BaseUrl       = 'http://localhost:18080',
-    [string]$AdminEmail    = 'admin@test.com',
-    [string]$AdminPassword = 'Admin@12345'
+    [string]$AdminEmail    = $(if ($env:BOOTSTRAP_ADMIN_EMAIL) { $env:BOOTSTRAP_ADMIN_EMAIL } else { 'prathibhalankavoyages@gmail.com' }),
+    [string]$AdminPassword = $(if ($env:PRATHIBALANKA_ADMIN_PASSWORD) { $env:PRATHIBALANKA_ADMIN_PASSWORD } elseif ($env:BOOTSTRAP_ADMIN_PASSWORD) { $env:BOOTSTRAP_ADMIN_PASSWORD } else { '' })
 )
+
+if ([string]::IsNullOrWhiteSpace($AdminPassword)) {
+    Write-Host 'No admin password.' -ForegroundColor Red
+    Write-Host 'These tests sign in as an admin, and no password is stored in the repository.'
+    Write-Host 'Set BOOTSTRAP_ADMIN_PASSWORD (the app uses the same variable to create the account),'
+    Write-Host 'or pass -AdminPassword, and run again.'
+    exit 1
+}
 
 $ErrorActionPreference = 'Stop'
 # Windows PowerShell 5.1 needs this assembly loaded explicitly; PowerShell 7 already ships it.
@@ -531,14 +542,94 @@ Test-Api -Name 'GET /api/admin/queries (customer token) -> 403' -Method Get -Pat
 $responded = Test-Api -Name 'PATCH /api/admin/queries/{id}/respond (admin)' -Method Patch `
     -Path "/api/admin/queries/$queryId/respond" -Token $adminToken -Expect 200 `
     -Body @{ adminResponse = 'Yes, December is available.' } `
-    -Check { param($r) $r.Json.status -eq 'RESPONDED' -and $r.Json.adminResponse -and $r.Json.respondedByName } `
-    -CheckDesc 'response + responder recorded' -Capture
+    -Check { param($r) $r.Json.status -eq 'RESPONDED' -and $r.Json.adminResponse -and $r.Json.respondedByName `
+             -and @($r.Json.messages).Count -eq 1 -and $r.Json.messages[0].direction -eq 'AGENCY' `
+             -and $r.Json.replySent -eq $false -and $r.Json.messages[0].emailed -eq $false } `
+    -CheckDesc 'reply stored on the thread, not sent yet' -Capture
+$queryToken = ($responded.Json.enquiryUrl -replace '^/enquiry/', '')
+
+# The customer has to actually receive it, which is what this flag records. It is written by the mail
+# worker after the response, from what the transport said - see MailNotificationListener.
+Test-Condition -Name 'async mail: reply_sent flips to true once the reply is away' -TimeoutSeconds 20 `
+    -CheckDesc 'mail worker sent the reply' -Check {
+    $r = Invoke-Api -Method Get -Path '/api/admin/queries' -Token $adminToken
+    $row = $r.Json | Where-Object { $_.queryId -eq $queryId }
+    $row.replySent -eq $true -and $row.messages[0].emailed -eq $true
+}
+
 Test-Api -Name 'PATCH respond twice -> 400' -Method Patch -Path "/api/admin/queries/$queryId/respond" `
     -Token $adminToken -Expect 400 -Body @{ adminResponse = 'again' }
 Test-Api -Name 'PATCH respond to unknown query -> 404' -Method Patch -Path '/api/admin/queries/999999/respond' `
     -Token $adminToken -Expect 404 -Body @{ adminResponse = 'x' }
 Test-Api -Name 'PATCH respond with blank text -> 400' -Method Patch -Path '/api/admin/queries/999999/respond' `
     -Token $adminToken -Expect 400 -Body @{ adminResponse = '' }
+Test-Api -Name 'PATCH respond with an over-long reply -> 400' -Method Patch -Path "/api/admin/queries/$queryId/respond" `
+    -Token $adminToken -Expect 400 -Body @{ adminResponse = ('x' * 5001) }
+
+# ---------------------------------------------------------------- the customer's own page
+#
+# A general enquiry used to be a one-way note: the acknowledgement quoted a reference that no page in
+# the application accepted. The token in that email now opens the enquiry, and the customer can write
+# back on it without an account - the same trade the booking PIN makes.
+
+Test-Api -Name 'GET /api/enquiries/{token} (public)' -Method Get -Path "/api/enquiries/$queryToken" -Expect 200 `
+    -Check { param($r) $r.Json.queryId -eq $queryId -and $r.Json.awaitingReply -eq $false `
+             -and @($r.Json.messages).Count -eq 1 } `
+    -CheckDesc 'the customer can read their answer'
+Test-Api -Name 'GET the customer view leaks no contact details' -Method Get -Path "/api/enquiries/$queryToken" `
+    -Expect 200 -Check { param($r) -not $r.Json.email -and -not $r.Json.phone -and -not $r.Json.respondedByName } `
+    -CheckDesc 'no email, phone or staff name in the public view'
+Test-Api -Name 'GET /api/enquiries with an unknown token -> 404' -Method Get -Path '/api/enquiries/not-a-real-token' -Expect 404
+
+Test-Api -Name 'POST /api/enquiries/{token}/messages (public)' -Method Post `
+    -Path "/api/enquiries/$queryToken/messages" -Expect 201 `
+    -Body @{ message = 'Could you also quote for four people?' } `
+    -Check { param($r) $r.Json.awaitingReply -eq $true `
+             -and @($r.Json.messages | Where-Object { $_.direction -eq 'CUSTOMER' }).Count -eq 1 } `
+    -CheckDesc 'their follow-up is waiting for an answer' -Capture
+
+Test-Api -Name 'POST an empty message -> 400' -Method Post -Path "/api/enquiries/$queryToken/messages" `
+    -Expect 400 -Body @{ message = '   ' }
+Test-Api -Name 'POST to an unknown token -> 404' -Method Post -Path '/api/enquiries/not-a-real-token/messages' `
+    -Expect 404 -Body @{ message = 'hello' }
+
+# Writing again puts the enquiry back in front of staff, which is the point of the waiting list.
+Test-Api -Name 'GET /api/admin/queries?onlyNew=true lists it again' -Method Get `
+    -Path '/api/admin/queries?onlyNew=true' -Token $adminToken -Expect 200 `
+    -Check { param($r) $r.Json.queryId -contains $queryId } -CheckDesc 'the follow-up is back on the list'
+
+$secondReply = Test-Api -Name 'PATCH respond again after a follow-up -> 200' -Method Patch `
+    -Path "/api/admin/queries/$queryId/respond" -Token $adminToken -Expect 200 `
+    -Body @{ adminResponse = 'Four people, same dates - a quote is on its way.' } `
+    -Check { param($r) @($r.Json.messages).Count -eq 3 `
+             -and $r.Json.adminResponse -eq 'Four people, same dates - a quote is on its way.' } `
+    -CheckDesc 'both answers are on the thread' -Capture
+
+Test-Condition -Name 'async mail: the second reply is sent as well' -TimeoutSeconds 20 `
+    -CheckDesc 'the customer heard back twice' -Check {
+    $r = Invoke-Api -Method Get -Path '/api/admin/queries' -Token $adminToken
+    ($r.Json | Where-Object { $_.queryId -eq $queryId }).replySent -eq $true
+}
+
+# ---------------------------------------------------------------- answered from the agency's inbox
+#
+# The way the details usually get agreed. It has to be recordable without pretending a mail went out,
+# and it has to be told apart from a reply that failed to send.
+
+$outside = Test-Api -Name 'POST answered-outside (admin)' -Method Post `
+    -Path "/api/admin/queries/$queryId/answered-outside" -Token $adminToken -Expect 200 `
+    -Body @{ note = 'Rang them back about the airport transfer.' } `
+    -Check { param($r) $r.Json.answeredOutside -eq $true -and $r.Json.replySent -eq $false `
+             -and @($r.Json.messages).Count -eq 4 -and $r.Json.messages[3].emailed -eq $false } `
+    -CheckDesc 'recorded as answered, with no mail claimed' -Capture
+Test-Api -Name 'POST answered-outside twice -> 400' -Method Post `
+    -Path "/api/admin/queries/$queryId/answered-outside" -Token $adminToken -Expect 400 -Body @{ note = 'again' }
+Test-Api -Name 'POST answered-outside to an unknown query -> 404' -Method Post `
+    -Path '/api/admin/queries/999999/answered-outside' -Token $adminToken -Expect 404 -Body @{ note = 'x' }
+Test-Api -Name 'POST answered-outside without a token -> 401' -Method Post `
+    -Path "/api/admin/queries/$queryId/answered-outside" -Expect 401 -Body @{ note = 'x' }
+Test-Api -Name 'POST answered-outside as a customer -> 403' -Method Post `
+    -Path "/api/admin/queries/$queryId/answered-outside" -Token $custAToken -Expect 403 -Body @{ note = 'x' }
 
 # ---------------------------------------------------------------- 7. bookings
 
@@ -553,8 +644,28 @@ $booking = Test-Api -Name 'POST /api/bookings/request (customer A, own id) -> 20
 $bookingId = $booking.Json.bookingId
 $bookingPin = $booking.Json.pinCode
 
-Test-Api -Name 'POST /api/bookings/request without token -> 401 (was 201!)' -Method Post -Path '/api/bookings/request' `
-    -Body @{ customerId = $custAId; packageId = $pkgId; numTravelers = 1; preferredTravelDate = '2026-12-02' } -Expect 401
+# The public form behind the "Request" button on a journey card: no token, contact details in the
+# body. It is the only write a visitor can make without an account, so it is rate limited like the
+# contact form, and a signed-in customer is linked to their account instead.
+$guest = Test-Api -Name 'POST /api/bookings/request without a token (a guest) -> 201' -Method Post -Path '/api/bookings/request' `
+    -Body @{ packageId = $pkgId; numTravelers = 1; preferredTravelDate = '2026-12-02'; `
+             contactName = "Guest $RunId"; contactEmail = "guest-booking-$RunId@example.com" } `
+    -Expect 201 `
+    -Check { param($r) $r.Json.status -eq 'PENDING' -and $r.Json.pinCode.Length -eq 8 -and $r.Json.customerEmail -like 'guest-booking-*' } `
+    -CheckDesc 'PENDING booking with a PIN, no account needed' -Capture
+$guestBookingId = $guest.Json.bookingId
+$guestPin = $guest.Json.pinCode
+
+Test-Api -Name 'POST guest booking with no name or email -> 400' -Method Post -Path '/api/bookings/request' `
+    -Body @{ packageId = $pkgId; numTravelers = 1; preferredTravelDate = '2026-12-02' } -Expect 400 `
+    -Check { param($r) $r.Json.message -like '*name and an email*' } -CheckDesc 'asks for a way to reply'
+Test-Api -Name 'POST guest booking claiming a customerId -> 403' -Method Post -Path '/api/bookings/request' `
+    -Body @{ customerId = $custAId; packageId = $pkgId; numTravelers = 1; preferredTravelDate = '2026-12-02'; `
+             contactName = 'Impersonator'; contactEmail = 'nobody@example.com' } -Expect 403 `
+    -Check { param($r) $r.Json.error -eq 'Forbidden' } -CheckDesc 'a guest cannot book on an account'
+Test-Api -Name 'GET /api/bookings/track?pin={guest pin} (public, no account)' -Method Get -Path "/api/bookings/track?pin=$guestPin" -Expect 200 `
+    -Check { param($r) $r.Json.bookingId -eq $guestBookingId } -CheckDesc 'the guest tracks it with the PIN'
+
 Test-Api -Name 'POST booking for ANOTHER customer -> 403 (was 201!)' -Method Post -Path '/api/bookings/request' `
     -Token $custBToken `
     -Body @{ customerId = $custAId; packageId = $pkgId; numTravelers = 1; preferredTravelDate = '2026-12-02' } -Expect 403 `
@@ -850,9 +961,28 @@ Test-Api -Name 'DELETE package with bookings -> 409 conflict' -Method Delete -Pa
     -Token $adminToken -Expect 409 -Check { param($r) $r.Json.error -eq 'Conflict' } -CheckDesc 'FK conflict reported as 409 (was 500)'
 
 Test-Api -Name 'DELETE unused package -> 204' -Method Delete -Path "/api/admin/packages/$smallPkgId" -Token $adminToken -Expect 204
+Test-Api -Name 'DELETE deactivated package -> 204' -Method Delete -Path "/api/admin/packages/$deadPkgId" -Token $adminToken -Expect 204
 Test-Api -Name 'DELETE /api/admin/gallery/{id} -> 204' -Method Delete -Path "/api/admin/gallery/$imgId" -Token $adminToken -Expect 204
 Test-Api -Name 'DELETE /api/admin/journal/{id} -> 204' -Method Delete -Path "/api/admin/journal/$draftId" -Token $adminToken -Expect 204
 Test-Api -Name 'DELETE general review -> 204' -Method Delete -Path "/api/admin/reviews/$generalReviewId" -Token $adminToken -Expect 204
+
+# ------------------------------------------------- what stays behind, and why
+
+# Three kinds of record this run creates have no delete route at all: an admin can confirm or reject
+# a booking, answer an enquiry and read a customer, but not remove any of them. The packages those
+# bookings point at therefore cannot be deleted either - DELETE answers 409, which is the check
+# above. Everything else the run created has just been deleted.
+#
+# Printed rather than left silent: a suite that quietly accumulates rows is a suite that eventually
+# makes the numbers on the dashboard wrong, and whoever runs this against a database that matters
+# needs to know what to tidy by hand.
+Write-Host ''
+Write-Host 'Left behind (the API has no delete for these):' -ForegroundColor Yellow
+Write-Host "  customers       $custAEmail, $custBEmail, $mixedEmail"
+Write-Host "  contact queries guest-$RunId@example.com ('Question $RunId') and $custAEmail ('Linked query')"
+Write-Host "  packages        'Updated Package $RunId' and 'Race Package $RunId' - each still has this run's bookings"
+Write-Host "  bookings        those bookings, against the two packages above"
+Write-Host '  -> run this suite against a development database.'
 
 # ---------------------------------------------------------------- summary
 

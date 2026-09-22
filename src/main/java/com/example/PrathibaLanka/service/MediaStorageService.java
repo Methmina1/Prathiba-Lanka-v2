@@ -118,6 +118,10 @@ public class MediaStorageService {
         try (InputStream in = file.getInputStream()) {
             Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException ex) {
+            // A copy that fails part way through leaves a file behind that no row points at, and a
+            // 0-byte one if it failed immediately - which is how stray files appear in the media
+            // directory. Remove it: the upload is being refused anyway.
+            delete(storedName);
             throw new IllegalStateException("Could not store the uploaded file", ex);
         }
 

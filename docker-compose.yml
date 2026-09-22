@@ -1,4 +1,7 @@
-version: '3.8'
+# The development database. Published on 5432, which another project on this machine may already be
+# using - if `mvn spring-boot:run` reports "password authentication failed for user travel_admin",
+# that is a different Postgres answering on the port, not a wrong password: `docker ps` will show
+# which container owns 5432, and this one has to be started after it (or on another port).
 services:
   postgres:
     image: postgres:15
@@ -11,5 +14,6 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
 volumes:
   postgres_data:

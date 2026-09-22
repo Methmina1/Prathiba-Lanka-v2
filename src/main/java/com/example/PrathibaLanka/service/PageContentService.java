@@ -215,7 +215,11 @@ public class PageContentService {
 
     private JsonNode read(String json) {
         try {
-            return objectMapper.readTree(json);
+            // Tolerate a byte order mark. These defaults are hand-edited on Windows, where a UTF-8
+            // writer adds one silently - and Jackson rejects it outright, so the app would fail to
+            // start on the one occasion it matters: seeding a fresh database, which is exactly what
+            // a first deployment does.
+            return objectMapper.readTree(json == null ? null : json.stripLeading().replace("\uFEFF", ""));
         } catch (JacksonException ex) {
             throw new IllegalStateException("Bundled default content is not valid JSON", ex);
         }

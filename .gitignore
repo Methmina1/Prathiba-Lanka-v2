@@ -35,3 +35,9 @@ build/
 ### Uploaded media (images and short videos) ###
 ### Files live on disk under app.media.dir; only the rows in media_asset are versioned. ###
 uploads/
+
+### What the fake SMTP sink recorded (scripts/fake-smtp.ps1 -Dump) ###
+### Whole messages, addresses included: an artifact for reading, not for committing. ###
+smtp-dump.txt
+smtp.log
+app.log

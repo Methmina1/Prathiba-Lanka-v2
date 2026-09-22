@@ -23,14 +23,24 @@ public class BookingController {
 
     private final BookingService bookingService;
 
-    // ---------------- CUSTOMER ----------------
+    // ---------------- PUBLIC / CUSTOMER ----------------
 
-    /** Booking is created for the authenticated customer; a mismatched customerId is rejected (403). */
+    /**
+     * Requests a journey.
+     *
+     * <p>This is the one write a visitor can make without an account, because it is the button on a
+     * journey card: the person clicking it is a traveller with an email address, not a registered
+     * customer. They get a PIN back and an email saying the request is pending.
+     *
+     * <p>Staff are excluded rather than merely not offered it - an administrator is not a customer,
+     * and a booking they made would sit in the console queue they themselves work. A signed-in
+     * customer's request is attached to their account; see {@link BookingService#requestBooking}.
+     */
     @PostMapping("/api/bookings/request")
-    @PreAuthorize("hasRole('CUSTOMER')")
+    @PreAuthorize("!hasRole('ADMIN')")
     public ResponseEntity<BookingResponseDTO> requestBooking(@Valid @RequestBody BookingRequestDTO dto,
                                                              @AuthenticationPrincipal UserPrincipal principal) {
-        BookingRequest booking = bookingService.requestBooking(dto, principal.getUserId());
+        BookingRequest booking = bookingService.requestBooking(dto, principal);
         return ResponseEntity.status(HttpStatus.CREATED).body(toDTO(booking));
     }
 
@@ -81,8 +91,11 @@ public class BookingController {
         dto.setBookingId(b.getBookingId());
         dto.setPinCode(b.getPinCode());
         dto.setStatus(b.getStatus());
-        dto.setCustomerName(b.getCustomer().getFullName());
-        dto.setCustomerEmail(b.getCustomer().getEmail());
+        // The booking's own contact details, not the account's: a request from the public form has no
+        // account, and these are what the console replies to. For a signed-in customer they were
+        // copied from the account when the request was made.
+        dto.setCustomerName(b.getContactName());
+        dto.setCustomerEmail(b.getContactEmail());
         dto.setPackageTitle(b.getTravelPackage().getTitle());
         dto.setDestination(b.getTravelPackage().getDestination());
         dto.setNumTravelers(b.getNumTravelers());
