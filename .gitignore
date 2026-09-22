@@ -41,3 +41,7 @@ uploads/
 smtp-dump.txt
 smtp.log
 app.log
+
+### A throwaway instance booted to rehearse a production seed against ###
+### Its own database and its own media directory, so the real ones are never touched. ###
+.staging-media/

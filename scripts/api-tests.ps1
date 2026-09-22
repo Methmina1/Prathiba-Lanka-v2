@@ -489,6 +489,35 @@ Test-Api -Name 'PUT /api/admin/journal/{id} back to DRAFT clears publishedAt' -M
     -Body @{ title = "Draft Post $($RunId)"; description = 'edited'; content = 'edited content'; status = 'draft' } `
     -Check { param($r) $r.Json.status -eq 'DRAFT' -and -not $r.Json.publishedAt } -CheckDesc 'normalized status + publishedAt cleared'
 
+# A story that arrives with its own publication date keeps it. This is what lets a production database
+# be seeded from another instance without dating the whole archive the day of the import - and what lets
+# an editor backdate a story that was written before the site existed.
+#
+# Compared as a date, not against a pattern. ConvertFrom-Json hands back a [datetime] on PowerShell 7 and
+# a plain string on Windows PowerShell 5.1, so `-like '2025-03-14T09:30*'` passes in one and fails in the
+# other while the API answers identically in both - which is exactly how this check was wrong the first
+# time. ToString('s') is the same ISO text whatever the culture and whatever the type coming in.
+$backdated = Test-Api -Name 'POST /api/admin/journal with publishedAt -> 201 keeps the date' -Method Post `
+    -Path '/api/admin/journal' -Token $adminToken -Expect 201 `
+    -Body @{ title = "Backdated Post $($RunId)"; content = 'written last year'; status = 'PUBLISHED'; publishedAt = '2025-03-14T09:30:00' } `
+    -Check { param($r) $r.Json.status -eq 'PUBLISHED' -and ([datetime]$r.Json.publishedAt).ToString('s') -eq '2025-03-14T09:30:00' } `
+    -CheckDesc 'publishedAt preserved exactly' -Capture
+
+Test-Api -Name 'PUT a published post can be re-dated' -Method Put -Path "/api/admin/journal/$($backdated.Json.journalId)" `
+    -Token $adminToken -Expect 200 `
+    -Body @{ title = "Backdated Post $($RunId)"; content = 'written last year'; status = 'PUBLISHED'; publishedAt = '2025-04-02T08:00:00' } `
+    -Check { param($r) ([datetime]$r.Json.publishedAt).ToString('s') -eq '2025-04-02T08:00:00' } -CheckDesc 'date moved'
+
+$datedDraft = Test-Api -Name 'a draft is not given a publication date' -Method Post -Path '/api/admin/journal' `
+    -Token $adminToken -Expect 201 `
+    -Body @{ title = "Dated Draft $($RunId)"; content = 'not published'; status = 'DRAFT'; publishedAt = '2025-01-01T00:00:00' } `
+    -Check { param($r) -not $r.Json.publishedAt } -CheckDesc 'a draft has no date' -Capture
+
+Test-Api -Name 'DELETE the backdated post -> 204' -Method Delete -Path "/api/admin/journal/$($backdated.Json.journalId)" `
+    -Token $adminToken -Expect 204
+Test-Api -Name 'DELETE the dated draft -> 204' -Method Delete -Path "/api/admin/journal/$($datedDraft.Json.journalId)" `
+    -Token $adminToken -Expect 204
+
 Test-Api -Name 'PATCH /api/admin/journal/{id}/unpublish' -Method Patch -Path "/api/admin/journal/$draftId/unpublish" `
     -Token $adminToken -Expect 200 -Check { param($r) $r.Json.status -eq 'DRAFT' } -CheckDesc 'status DRAFT'
 

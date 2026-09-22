@@ -70,7 +70,7 @@ public class MailNotificationListener {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onQuerySubmitted(QuerySubmittedEvent event) {
         queryRepo.findById(event.queryId()).ifPresent(query ->
-                query.setAutoResponseSent(emailService.sendAutoResponse(query)));
+                queryRepo.markAutoResponseSent(event.queryId(), emailService.sendAutoResponse(query)));
     }
 
     /**
@@ -80,6 +80,11 @@ public class MailNotificationListener {
      * written from what the transport actually said: {@code replySent} on the enquiry, so the console
      * can show whether the customer was reached, and {@code emailed} on the message, so the thread
      * distinguishes a reply that was sent from one recorded after the fact.
+     *
+     * <p>Both are written with targeted updates rather than by saving the entities. Sending takes
+     * seconds, and this runs on the mail worker: saving the enquiry afterwards would write every column
+     * back as it stood when this handler loaded it, undoing a customer's follow-up that arrived while
+     * the email was in flight. The enabled flag is the only thing this handler is entitled to change.
      */
     @Async("mailExecutor")
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -93,8 +98,8 @@ public class MailNotificationListener {
                 return;
             }
             boolean sent = emailService.sendQueryReplyEmail(query, reply);
-            reply.setEmailed(sent);
-            query.setReplySent(sent);
+            messageRepo.markEmailed(event.messageId(), sent);
+            queryRepo.markReplySent(event.queryId(), sent);
         }, () -> log.warn("Enquiry {} disappeared before its reply was sent", event.queryId()));
     }
 
@@ -115,7 +120,7 @@ public class MailNotificationListener {
                         event.messageId(), event.queryId());
                 return;
             }
-            message.setEmailed(emailService.sendQueryMessageToAgency(query, message));
+            messageRepo.markEmailed(event.messageId(), emailService.sendQueryMessageToAgency(query, message));
         }, () -> log.warn("Enquiry {} disappeared before its new message was reported", event.queryId()));
     }
 }

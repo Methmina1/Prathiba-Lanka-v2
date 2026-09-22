@@ -31,6 +31,12 @@ public class JournalService {
 
         if (PUBLISHED.equals(post.getStatus())) {
             post.publish();
+            // A story that arrives with its own date keeps it. The console never sends one - the API
+            // stamping "now" is right for a story being written - but an import filling a second
+            // instance does, and without this every seeded story would be dated the day of the import.
+            if (dto.getPublishedAt() != null) {
+                post.setPublishedAt(dto.getPublishedAt());
+            }
         }
 
         return journalRepo.save(post);
@@ -56,6 +62,11 @@ public class JournalService {
             } else if (DRAFT.equals(newStatus)) {
                 post.setPublishedAt(null);
             }
+        }
+
+        // Applied after the status, so a draft cannot be given a publication date it does not have.
+        if (dto.getPublishedAt() != null && PUBLISHED.equals(post.getStatus())) {
+            post.setPublishedAt(dto.getPublishedAt());
         }
 
         return journalRepo.save(post);
