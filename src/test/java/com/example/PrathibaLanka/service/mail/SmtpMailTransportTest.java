@@ -17,10 +17,10 @@ class SmtpMailTransportTest {
 
     private static final OutboundMail MAIL = new OutboundMail(
             "bookings@mail.prathibalanka.com",
-            "PrathibaLanka",
+            "PrathibhaLanka",
             "traveller@example.com",
             "prathibhalankavoyages@gmail.com",
-            "We received your message – PrathibaLanka",
+            "We received your message – PrathibhaLanka",
             "Thank you for contacting us.");
 
     @SuppressWarnings("unchecked")
@@ -44,7 +44,7 @@ class SmtpMailTransportTest {
         SimpleMailMessage message = sent(MAIL);
 
         // SMTP wants the sender as one header, which is where the record's two fields are joined.
-        assertThat(message.getFrom()).isEqualTo("PrathibaLanka <bookings@mail.prathibalanka.com>");
+        assertThat(message.getFrom()).isEqualTo("PrathibhaLanka <bookings@mail.prathibalanka.com>");
         // getTo() is the array accessor and getReplyTo() the single-value one - the opposite way round
         // from what you would guess, and both assert differently as a result.
         assertThat(message.getTo()).containsExactly(MAIL.to());

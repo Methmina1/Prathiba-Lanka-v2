@@ -44,7 +44,7 @@ param(
     [string]$AdminEmail     = $(if ($env:BOOTSTRAP_ADMIN_EMAIL) { $env:BOOTSTRAP_ADMIN_EMAIL } else { 'prathibhalankavoyages@gmail.com' }),
     [string]$AdminPassword  = $(if ($env:PRATHIBALANKA_ADMIN_PASSWORD) { $env:PRATHIBALANKA_ADMIN_PASSWORD } elseif ($env:BOOTSTRAP_ADMIN_PASSWORD) { $env:BOOTSTRAP_ADMIN_PASSWORD } else { '' }),
     [string]$ExpectFrom     = $(if ($env:MAIL_FROM) { $env:MAIL_FROM } else { 'prathibhalankavoyages@gmail.com' }),
-    [string]$ExpectFromName = $(if ($env:MAIL_FROM_NAME) { $env:MAIL_FROM_NAME } else { 'PrathibaLanka' }),
+    [string]$ExpectFromName = $(if ($env:MAIL_FROM_NAME) { $env:MAIL_FROM_NAME } else { 'PrathibhaLanka' }),
     [int]$TimeoutSeconds    = 25
 )
 

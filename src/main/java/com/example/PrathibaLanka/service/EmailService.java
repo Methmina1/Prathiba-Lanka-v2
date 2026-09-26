@@ -160,7 +160,7 @@ public class EmailService {
                 + "Your tracking PIN: " + booking.getPinCode() + "\n"
                 + "Keep it: you can follow the status of this request at any time on our website, using "
                 + "the PIN tracker, without an account.\n\n"
-                + "Best regards,\nPrathibaLanka Team";
+                + "Best regards,\nPrathibhaLanka Team";
         return sendAndLog(to, subject, body, EmailType.PENDING_NOTIFICATION, booking);
     }
 
@@ -175,7 +175,7 @@ public class EmailService {
                 + "Confirmed date: " + booking.getConfirmedDate() + "\n"
                 + "Agreed price: $" + booking.getConfirmedPrice() + "\n\n"
                 + "We will be in touch with the documents and the meeting arrangements.\n\n"
-                + "Best regards,\nPrathibaLanka Team";
+                + "Best regards,\nPrathibhaLanka Team";
         return sendAndLog(to, subject, body, EmailType.CONFIRMATION, booking);
     }
 
@@ -200,7 +200,7 @@ public class EmailService {
                 + "you would like us to suggest something similar, reply to this email - or send a new "
                 + "request from the website - and we will find something that works.\n\n"
                 + "Your reference PIN: " + booking.getPinCode() + "\n\n"
-                + "Best regards,\nPrathibaLanka Team";
+                + "Best regards,\nPrathibhaLanka Team";
         return sendAndLog(to, subject, body, EmailType.CANCELLATION, booking);
     }
 
@@ -209,14 +209,38 @@ public class EmailService {
         // The reference in the subject, not only in the body: it is what lets whoever reads the inbox
         // match a thread to the row in the console a week later, and it is how the two "Re:" mails that
         // follow are recognised as belonging to the same enquiry.
-        String subject = "[" + reference(query) + "] We received your message – PrathibaLanka";
+        String subject = "[" + reference(query) + "] We received your message – PrathibhaLanka";
         String body = "Dear " + query.getName() + ",\n\n"
                 + "Thank you for contacting us.\n"
                 + "We have received your message and will get back to you as soon as possible.\n\n"
                 + "Your enquiry reference: " + reference(query) + "\n"
                 + enquiryLinkNote(query, "You can read our answer, and write back to us, at any time:")
-                + "Best regards,\nPrathibaLanka Team";
+                + "Best regards,\nPrathibhaLanka Team";
         return sendAndLog(to, subject, body, EmailType.AUTO_RESPONSE, null);
+    }
+
+    /**
+     * The one-time code that lets an admin who has forgotten their password back in.
+     *
+     * <p>The code is in the body and not the subject, unlike the booking PIN. A subject line shows up
+     * on a lock screen, on a watch, and in the list view of an inbox somebody else may be standing
+     * behind; a code that resets the console password is not worth that convenience, and the person
+     * waiting for it is already looking at the message.
+     *
+     * <p>It also says what to do if it was not them, because asking for a code changes nothing on its
+     * own: the password still works, and the code expires in ten minutes unused.
+     */
+    public boolean sendPasswordResetCode(String to, String name, String code, int validForMinutes) {
+        String subject = "Your PrathibhaLanka password reset code";
+        String body = "Hello " + name + ",\n\n"
+                + "Somebody asked to change the password on the admin account for " + to + ".\n\n"
+                + "Your code: " + code + "\n"
+                + "It works once, for the next " + validForMinutes + " minutes.\n\n"
+                + "Enter it on the sign-in page, under \"Forgotten your password?\".\n\n"
+                + "If this was not you, nothing has changed and you can ignore this message - your "
+                + "password still works exactly as it did.\n\n"
+                + "Best regards,\nPrathibhaLanka Team";
+        return sendAndLog(to, subject, body, EmailType.PASSWORD_RESET, null);
     }
 
     /**
@@ -237,7 +261,7 @@ public class EmailService {
                 + quote(query.getMessage()) + "\n"
                 + "Your enquiry reference: " + reference(query) + "\n"
                 + enquiryLinkNote(query, "You can read this answer on our site, and write back to us, at:")
-                + "Best regards,\nPrathibaLanka Team";
+                + "Best regards,\nPrathibhaLanka Team";
         return sendAndLog(to, subject, body, EmailType.QUERY_RESPONSE, null);
     }
 

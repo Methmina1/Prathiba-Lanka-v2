@@ -72,6 +72,11 @@ public class SecurityConfig {
                         // Method-scoped so that a write endpoint added under the same path later
                         // is not public by accident.
                         .requestMatchers("/api/auth/login", "/api/auth/register").permitAll()
+                        // An admin asking for a reset code, or spending one, is by definition not
+                        // signed in yet - these have to be reachable without a token or the feature
+                        // that exists to get a locked-out admin back in is itself unreachable.
+                        .requestMatchers(HttpMethod.POST,
+                                "/api/auth/password/forgot", "/api/auth/password/reset").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/packages", "/api/packages/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/reviews", "/api/reviews/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/gallery", "/api/gallery/**").permitAll()

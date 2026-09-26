@@ -164,7 +164,7 @@ jobs:
       - name: Verify the mail the application sends
         env:
           MAIL_FROM: prathibhalankavoyages@gmail.com
-          MAIL_FROM_NAME: PrathibaLanka
+          MAIL_FROM_NAME: PrathibhaLanka
         run: pwsh -NoProfile -File scripts/verify-mail.ps1 -BaseUrl http://localhost:8080 -Dump smtp-dump.txt
 
       - name: Application log
