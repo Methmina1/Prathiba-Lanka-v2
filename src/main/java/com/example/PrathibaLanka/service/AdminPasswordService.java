@@ -53,6 +53,15 @@ public class AdminPasswordService {
     /** What a reset attempt did. Returned rather than thrown, for the reason given in resetPassword. */
     public enum Outcome { CHANGED, INVALID_CODE }
 
+    /**
+     * Whether a reset code was actually sent.
+     *
+     * <p>Returned rather than swallowed because the controller has to choose a status code, and the
+     * caller who typed a customer address deserves to be told. This is the one place in this class
+     * where the answer is deliberately not uniform - see the note on requestReset for what that costs.
+     */
+    public enum RequestOutcome { SENT, NOT_ADMIN }
+
     /** The everyday path: the admin is signed in and knows the password they are replacing. */
     @Transactional
     public void changePassword(Long adminId, String currentPassword, String newPassword) {
@@ -74,22 +83,26 @@ public class AdminPasswordService {
     }
 
     /**
-     * Asks for a reset code by email.
+     * Asks for a reset code by email. Returns whether one was sent.
      *
-     * <p>Answers the same way whatever happens, and the controller says so in the same words: whether
-     * an address has an admin account behind it is not something this endpoint is willing to tell
-     * anybody who can type an address into it. The mail is published as an event so that it leaves on
-     * the mail pool - which also removes the pause that would otherwise make a real account slower to
-     * answer than an imaginary one.
+     * <p>This endpoint now tells the caller apart: a real admin gets a 200, an address with no admin
+     * account behind it gets a 401 from the controller. That is a deliberate trade - it costs an
+     * enumeration oracle (anyone who can POST here can ask "is this an admin address?" and get a
+     * yes/no), and it buys a mistyped address being told so instead of waiting for a mail that will
+     * never arrive. The oracle is only tolerable because this path is rate limited; if that ever
+     * stops being true, this method should go back to returning void.
+     *
+     * <p>The mail is published as an event so that it leaves on the mail pool - see the listener for
+     * the transaction phase, which is what stops a rolled-back code being emailed.
      */
     @Transactional
-    public void requestReset(String email) {
+    public RequestOutcome requestReset(String email) {
         String normalized = normalize(email);
 
         Admin admin = adminRepository.findByEmailIgnoreCase(normalized).orElse(null);
         if (admin == null) {
             log.info("Password reset asked for {}, which has no admin account. Nothing sent.", normalized);
-            return;
+            return RequestOutcome.NOT_ADMIN;
         }
 
         // One live code at a time: asking twice must not leave the first one working.
@@ -105,6 +118,8 @@ public class AdminPasswordService {
 
         events.publishEvent(new PasswordResetRequestedEvent(
                 admin.getAdminId(), admin.getEmail(), admin.getFullName(), code, CODE_VALID_MINUTES));
+
+        return RequestOutcome.SENT;
     }
 
     /**
@@ -116,7 +131,10 @@ public class AdminPasswordService {
      * for its entire lifetime. The controller turns {@link Outcome#INVALID_CODE} into the 400.
      *
      * <p>A code that does not exist, one that has expired, one belonging to an address with no
-     * account, and one that has been got wrong too many times all produce the same answer.
+     * account, and one that has been got wrong too many times all produce the same answer. This side
+     * stays uniform even though the request side no longer is: by the time a code is being spent,
+     * telling the caller *why* it failed is telling them whether the account exists, and the
+     * enumeration question was already answered a step earlier.
      */
     @Transactional
     public Outcome resetPassword(String email, String code, String newPassword) {

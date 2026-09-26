@@ -79,15 +79,27 @@ public class AuthController {
     }
 
     /**
-     * "I have forgotten my password." Emails a one-time code, if that address has an admin account.
+     * "I have forgotten my password." Emails a one-time code if that address has an admin account,
+     * and says so when it does not.
      *
-     * <p>Always the same 200 and the same sentence. Whether an address has an account behind it is
-     * something this endpoint is not willing to tell anyone who can type an address into it, so the
-     * caller learns nothing from the response - only from the inbox, which is the point.
+     * <p>This used to answer identically whether or not the address was known, so that the endpoint
+     * could not be used to ask "is this an admin?". It no longer does: a 401 for an unknown address
+     * is worth more to the admin who mistyped theirs than the silence is, and the rate limit on this
+     * path is what keeps the resulting enumeration oracle from being a practical one. If the rate
+     * limit is ever removed, this should go back to the uniform 200.
+     *
+     * <p>The 401 is returned, not thrown. Throwing an AuthenticationException here would hand the
+     * response to {@code JwtAuthEntryPoint}, which would replace this message with its own.
      */
     @PostMapping("/password/forgot")
     public ResponseEntity<ApiResponse<Void>> forgotPassword(@Valid @RequestBody ForgotPasswordRequestDTO dto) {
-        adminPasswordService.requestReset(dto.getEmail());
+        AdminPasswordService.RequestOutcome outcome = adminPasswordService.requestReset(dto.getEmail());
+
+        if (outcome == AdminPasswordService.RequestOutcome.NOT_ADMIN) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(ApiResponse.error(
+                    "That address does not belong to an admin account."));
+        }
+
         return ResponseEntity.ok(ApiResponse.success(
                 "If that address belongs to an admin account, a code is on its way. It is good for 10 minutes.",
                 null));
