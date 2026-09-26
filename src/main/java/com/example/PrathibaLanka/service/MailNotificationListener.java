@@ -4,6 +4,7 @@ import com.example.PrathibaLanka.entity.QueryMessage;
 import com.example.PrathibaLanka.event.BookingCancelledEvent;
 import com.example.PrathibaLanka.event.BookingConfirmedEvent;
 import com.example.PrathibaLanka.event.BookingCreatedEvent;
+import com.example.PrathibaLanka.event.PasswordResetRequestedEvent;
 import com.example.PrathibaLanka.event.QueryMessagePostedEvent;
 import com.example.PrathibaLanka.event.QueryRespondedEvent;
 import com.example.PrathibaLanka.event.QuerySubmittedEvent;
@@ -101,6 +102,22 @@ public class MailNotificationListener {
             messageRepo.markEmailed(event.messageId(), sent);
             queryRepo.markReplySent(event.queryId(), sent);
         }, () -> log.warn("Enquiry {} disappeared before its reply was sent", event.queryId()));
+    }
+
+    /**
+     * The one-time code an admin asked for after forgetting their console password.
+     *
+     * <p>Sent after commit and off the request thread like everything else here, and here that
+     * matters for more than throughput: {@link AdminPasswordService#requestReset} has to answer in
+     * the same time whether or not the address belongs to an admin account, and sending the mail
+     * inline would make the two cases measurably different to anyone timing the response.
+     */
+    @Async("mailExecutor")
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onPasswordResetRequested(PasswordResetRequestedEvent event) {
+        emailService.sendPasswordResetCode(
+                event.email(), event.fullName(), event.code(), event.validForMinutes());
     }
 
     /**

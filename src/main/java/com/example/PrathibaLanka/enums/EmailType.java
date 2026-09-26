@@ -5,5 +5,7 @@ public enum EmailType {
     /** The agency's reply to an enquiry, sent to the customer. */
     QUERY_RESPONSE,
     /** "The customer wrote again", sent to the agency inbox that answers. */
-    QUERY_MESSAGE
+    QUERY_MESSAGE,
+    /** The one-time code that lets an admin who has forgotten their password back in. */
+    PASSWORD_RESET
 }

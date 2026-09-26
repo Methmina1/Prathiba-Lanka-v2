@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    End-to-end API test for the PrathibaLanka Spring Boot backend.
+    End-to-end API test for the PrathibhaLanka Spring Boot backend.
 
 .DESCRIPTION
     Exercises every REST endpoint (auth, packages, gallery, journal, contact/queries, bookings,
@@ -260,7 +260,7 @@ function Test-Condition {
 # ---------------------------------------------------------------- 0. setup
 
 Write-Host ''
-Write-Host "PrathibaLanka API test run $($RunId) against $BaseUrl" -ForegroundColor White
+Write-Host "PrathibhaLanka API test run $($RunId) against $BaseUrl" -ForegroundColor White
 Write-Host "Admin: $AdminEmail"
 
 Section '0. Connectivity & admin bootstrap'

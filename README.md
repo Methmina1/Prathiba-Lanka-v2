@@ -1,4 +1,4 @@
-# PrathibaLanka
+# PrathibhaLanka
 
 REST backend for a Sri Lanka travel agency: travel packages, booking requests with PIN tracking,
 customer reviews, gallery, journal posts, contact queries, uploaded media and the editable copy of
@@ -51,7 +51,7 @@ match `docker-compose.yml`). `application.properties` carries the reasoning next
 |---|---|---|
 | `JWT_SECRET` | dev placeholder | Token signing key, ≥32 bytes. **Has no default under the `prod` profile** |
 | `JWT_EXPIRATION_MS` | `86400000` (24 h) | Token lifetime |
-| `JWT_ISSUER` | `PrathibaLanka` | Token issuer claim |
+| `JWT_ISSUER` | `PrathibhaLanka` | Token issuer claim. Changing it invalidates tokens already issued |
 | `BOOTSTRAP_ADMIN_ENABLED` | `true` | Create/repair the first admin on startup |
 | `BOOTSTRAP_ADMIN_EMAIL` | `prathibhalankavoyages@gmail.com` | Bootstrap admin login |
 | `BOOTSTRAP_ADMIN_PASSWORD` | *(none)* | **Must be set** for an admin to be created; there is no default so no password is ever committed |
@@ -68,7 +68,7 @@ in production and change the password after the first login.
 | Variable | Default | Purpose |
 |---|---|---|
 | `MAIL_TRANSPORT` | `smtp` | `smtp`, `bird` (the HTTPS API production uses) or `none` — see [Email](#email) |
-| `MAIL_FROM` / `MAIL_FROM_NAME` | `prathibhalankavoyages@gmail.com` / `PrathibaLanka` | Sender the recipient sees. Over the Bird API it must be on the verified sending domain |
+| `MAIL_FROM` / `MAIL_FROM_NAME` | `prathibhalankavoyages@gmail.com` / `PrathibhaLanka` | Sender the recipient sees. Over the Bird API it must be on the verified sending domain |
 | `MAIL_REPLY_TO` | `prathibhalankavoyages@gmail.com` | Where replies go. The sending subdomain has no MX, so without this a reply bounces |
 | `BIRD_API_KEY` | *(empty)* | Bird API key, needed when `MAIL_TRANSPORT=bird` |
 | `BIRD_API_URL` | `https://eu1.platform.bird.com/v1/email/messages` | Bird's email endpoint. The host follows the key's region prefix — see [Email](#email) |

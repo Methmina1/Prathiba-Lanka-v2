@@ -32,4 +32,14 @@ public class Admin {
 
     @CreationTimestamp
     private LocalDateTime createdAt;
+
+    /**
+     * When this password was last changed from inside the application, or null if it never has been.
+     *
+     * <p>Tokens carry the moment they were issued, and one issued before this is refused - which is
+     * what makes "change your password" mean something for sessions that are already open. Null for
+     * every admin that has never changed it, so no existing token is invalidated by this column
+     * appearing.
+     */
+    private LocalDateTime passwordChangedAt;
 }
